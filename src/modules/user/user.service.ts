@@ -1,12 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { HttpException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './user.entity';
 import { userCreateDto } from './user.dto';
-import { UtilsService } from '../../libs/utils/utils.service';
 import { AuthService } from '../auth/auth.service';
-
-const utilsService = new UtilsService();
 
 @Injectable()
 export class UserService {
@@ -31,7 +28,7 @@ export class UserService {
   async getToken(id: number) {
     const user = await this.getById(id);
     if (user === null) {
-      return utilsService.throwError('User not found', 404);
+      throw new HttpException('User not found', 404);
     }
 
     return this.authService.generateToken(user);
@@ -42,7 +39,7 @@ export class UserService {
     const { phone } = data;
 
     if ((await this.getByPhoneNumber(phone)) !== null) {
-      utilsService.throwError('User exists');
+      throw new HttpException('User exists', 400);
     }
 
     const user = this.userRepository.create(data);

@@ -12,12 +12,14 @@ async function bootstrap() {
     }),
   );
 
-  await app.listen(process.env.PORT ?? 3000);
+  await app.listen(process.env.PORT ?? 3000, process.env.HOST ?? 'localhost');
 }
 
 bootstrap()
   .then(() => {
-    console.log('Server is running on http://localhost:3000');
+    console.log(
+      `Server is running on http://${process.env.HOST ?? 'localhost'}:${process.env.PORT ?? 3000}`,
+    );
   })
   .catch((err) => {
     console.log('error in running server', err);

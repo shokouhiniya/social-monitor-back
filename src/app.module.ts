@@ -8,7 +8,7 @@ import { LoggerMiddleware } from './libs/logger/logger.middleware';
 import { ConfigModule } from './libs/config/config.module';
 import { UserModule } from './modules/user/user.module';
 import { APP_INTERCEPTOR } from '@nestjs/core';
-import { ResponseInterceptor } from './response.interceptor';
+import { ResponseInterceptor } from './libs/interceptors/response.interceptor';
 
 @Module({
   imports: [AuthModule, DatabaseModule, ConfigModule, UserModule],

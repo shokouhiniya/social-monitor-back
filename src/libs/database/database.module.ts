@@ -18,8 +18,8 @@ import { ConfigModule } from '../config/config.module'; // relative import
           username: dbConfig.username,
           password: dbConfig.password,
           database: dbConfig.name,
-          autoLoadEntities: true,
-          synchronize: true, // Comment on production
+          autoLoadEntities: dbConfig.autoLoadEntities,
+          synchronize: dbConfig.synchronize, // Comment on production
         };
       },
     }),
