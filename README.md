@@ -8,7 +8,7 @@
 
 ## Description
 
-[Pishrun](https://github.com/nestjs/nest) nestjs TypeScript starter repository.
+[Pishrun](https://hamgit.ir/pishrun/core/nestjs-starter) nestjs TypeScript starter repository.
 
 ## Project setup
 
