@@ -14,11 +14,20 @@ export class User {
   @Column()
   name: string;
 
-  @Column({ unique: true, nullable: false })
+  @Column({ unique: true, nullable: true })
   phone: string;
+
+  @Column({ unique: true, nullable: false })
+  email: string;
+
+  @Column({ nullable: false })
+  password: string;
 
   @Column({ default: true })
   is_active: boolean;
+
+  @Column({ type: 'varchar', default: 'user' })
+  role: string;
 
   @CreateDateColumn({
     type: 'timestamp',
