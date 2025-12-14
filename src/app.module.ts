@@ -7,18 +7,11 @@ import { DatabaseModule } from './libs/database/database.module';
 import { LoggerMiddleware } from './libs/logger/logger.middleware';
 import { ConfigModule } from './libs/config/config.module';
 import { UserModule } from './modules/user/user.module';
-import { HetznerModule } from './modules/hetzner/hetzner.module';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ResponseInterceptor } from './libs/interceptors/response.interceptor';
 
 @Module({
-  imports: [
-    AuthModule,
-    DatabaseModule,
-    ConfigModule,
-    UserModule,
-    HetznerModule,
-  ],
+  imports: [AuthModule, DatabaseModule, ConfigModule, UserModule],
   controllers: [AppController],
   providers: [
     AppService,
