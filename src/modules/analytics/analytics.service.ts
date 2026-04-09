@@ -126,7 +126,7 @@ export class AnalyticsService {
 
     const sentimentLabel = avgSentiment > 0.2 ? 'امیدوار' : avgSentiment < -0.2 ? 'خشمگین' : 'خنثی';
 
-    const paragraphs = [];
+    const paragraphs: string[] = [];
 
     paragraphs.push(`در بازه ۶ ساعت اخیر (${sixHoursAgo.toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })} تا ${now.toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })}), مجموعاً ${totalPosts} پست از ${totalPages} پیج تحت پایش ثبت شده است.`);
 
