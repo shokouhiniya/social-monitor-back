@@ -16,8 +16,8 @@ export class AnalyticsService {
         this.pageService.getClusterDistribution(),
         this.pageService.getCountryDistribution(),
         this.pageService.getTopInfluencers(10),
-        this.postService.getTrendingKeywords(7),
-        this.postService.getTopicGravity(7),
+        this.postService.getTrendingKeywords(30),
+        this.postService.getTopicGravity(30),
       ]);
 
     return {
@@ -32,7 +32,7 @@ export class AnalyticsService {
 
   async getAlignmentIndex() {
     // Measures how much the 2000 pages are saying the same thing
-    const keywords = await this.postService.getTrendingKeywords(7);
+    const keywords = await this.postService.getTrendingKeywords(30);
     const total = keywords.reduce((sum, k) => sum + k.count, 0);
     const top5 = keywords.slice(0, 5).reduce((sum, k) => sum + k.count, 0);
     const alignment = total > 0 ? top5 / total : 0;

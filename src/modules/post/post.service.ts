@@ -109,7 +109,7 @@ export class PostService {
 
     const posts = await this.postRepository
       .createQueryBuilder('post')
-      .select('post.extracted_topics, post.sentiment_label')
+      .select(['post.extracted_topics', 'post.sentiment_label'])
       .where('post.published_at >= :since', { since })
       .getMany();
 
