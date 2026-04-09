@@ -91,4 +91,15 @@ export class PageService {
       take: limit,
     });
   }
+
+  async getGhostPages() {
+    // Pages with low consistency, low activity, or potential content deletion
+    return await this.pageRepository
+      .createQueryBuilder('page')
+      .where('page.consistency_rate < :threshold', { threshold: 2 })
+      .orWhere('page.is_active = false')
+      .orderBy('page.consistency_rate', 'ASC')
+      .limit(50)
+      .getMany();
+  }
 }

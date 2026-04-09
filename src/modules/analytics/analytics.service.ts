@@ -68,9 +68,10 @@ export class AnalyticsService {
   }
 
   async getProfileDeepDive(pageId: number) {
-    const [page, sentimentTimeline] = await Promise.all([
+    const [page, sentimentTimeline, contentHooks] = await Promise.all([
       this.pageService.findById(pageId),
       this.postService.getSentimentTimeline(pageId, 30),
+      this.postService.getContentHookAnalysis(pageId),
     ]);
 
     return {
@@ -82,6 +83,22 @@ export class AnalyticsService {
       consistency_rate: page.consistency_rate,
       sentiment_timeline: sentimentTimeline,
       keywords: page.keywords,
+      content_hooks: contentHooks,
     };
+  }
+
+  async getReactionVelocity(days = 7) {
+    // Measures how fast the network reacts to breaking news
+    return await this.postService.getReactionVelocity(days);
+  }
+
+  async getNetworkPulse() {
+    // Real-time activity level of the entire network
+    return await this.postService.getNetworkPulse();
+  }
+
+  async getGhostPages() {
+    // Pages with very low activity or content deletion patterns
+    return await this.pageService.getGhostPages();
   }
 }

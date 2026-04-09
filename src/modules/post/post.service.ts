@@ -146,4 +146,56 @@ export class PostService {
       .limit(30)
       .getRawMany();
   }
+
+  async getContentHookAnalysis(pageId: number) {
+    // Analyze which content formats get the most engagement for a specific page
+    const posts = await this.postRepository
+      .createQueryBuilder('post')
+      .select('post.post_type', 'format')
+      .addSelect('AVG(post.likes_count + post.comments_count + post.shares_count)', 'avg_engagement')
+      .addSelect('COUNT(*)', 'post_count')
+      .where('post.page_id = :pageId', { pageId })
+      .groupBy('post.post_type')
+      .orderBy('avg_engagement', 'DESC')
+      .getRawMany();
+
+    return posts;
+  }
+
+  async getReactionVelocity(days = 7) {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+
+    // Measure average time between a topic appearing and network coverage
+    const result = await this.postRepository
+      .createQueryBuilder('post')
+      .select("DATE(post.published_at)", 'date')
+      .addSelect('MIN(post.published_at)', 'first_post')
+      .addSelect('MAX(post.published_at)', 'last_post')
+      .addSelect('COUNT(DISTINCT post.page_id)', 'unique_pages')
+      .addSelect('COUNT(*)', 'total_posts')
+      .where('post.published_at >= :since', { since })
+      .groupBy('date')
+      .orderBy('date', 'DESC')
+      .getRawMany();
+
+    return result;
+  }
+
+  async getNetworkPulse() {
+    // Activity level in the last 24 hours, broken by hour
+    const since = new Date();
+    since.setHours(since.getHours() - 24);
+
+    const result = await this.postRepository
+      .createQueryBuilder('post')
+      .select("EXTRACT(HOUR FROM post.published_at)", 'hour')
+      .addSelect('COUNT(*)', 'post_count')
+      .where('post.published_at >= :since', { since })
+      .groupBy('hour')
+      .orderBy('hour', 'ASC')
+      .getRawMany();
+
+    return result;
+  }
 }

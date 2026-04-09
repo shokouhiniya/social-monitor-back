@@ -24,4 +24,19 @@ export class AnalyticsController {
   getProfileDeepDive(@Param('pageId') pageId: number) {
     return this.analyticsService.getProfileDeepDive(pageId);
   }
+
+  @Get('reaction-velocity')
+  getReactionVelocity(@Query('days') days: number) {
+    return this.analyticsService.getReactionVelocity(days);
+  }
+
+  @Get('network-pulse')
+  getNetworkPulse() {
+    return this.analyticsService.getNetworkPulse();
+  }
+
+  @Get('ghost-pages')
+  getGhostPages() {
+    return this.analyticsService.getGhostPages();
+  }
 }
