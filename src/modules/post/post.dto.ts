@@ -1,4 +1,5 @@
 import { IsNotEmpty, IsOptional, IsString, IsNumber, IsBoolean } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreatePostDto {
   @IsNotEmpty()
@@ -65,6 +66,7 @@ export class CreatePostDto {
 
 export class PostQueryDto {
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   page_id?: number;
 
@@ -81,10 +83,12 @@ export class PostQueryDto {
   search?: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   page?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   limit?: number;
 }

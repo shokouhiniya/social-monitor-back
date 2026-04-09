@@ -101,4 +101,41 @@ export class AnalyticsService {
     // Pages with very low activity or content deletion patterns
     return await this.pageService.getGhostPages();
   }
+
+  async getPeriodicReport() {
+    const now = new Date();
+    const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+
+    const [keywords, topics, sentiment] = await Promise.all([
+      this.postService.getTrendingKeywords(1),
+      this.postService.getTopicGravity(1),
+      this.postService.getSentimentTimeline(undefined, 1),
+    ]);
+
+    const topKeywords = keywords.slice(0, 5).map((k) => k.keyword);
+    const topTopics = topics.slice(0, 5).map((t) => t.topic);
+    const avgSentiment = sentiment.length > 0
+      ? sentiment.reduce((s, i) => s + Number(i.avg_sentiment || 0), 0) / sentiment.length
+      : 0;
+
+    const sentimentLabel = avgSentiment > 0.2 ? 'امیدوار' : avgSentiment < -0.2 ? 'خشمگین' : 'خنثی';
+
+    const report = `در بازه ۶ ساعت اخیر، شبکه پایش بیشترین تمرکز را بر موضوعات «${topTopics.join('، ')}» داشته است. کلمات کلیدی پرتکرار شامل ${topKeywords.join('، ')} بوده و لحن غالب شبکه ${sentimentLabel} ارزیابی می‌شود. ${avgSentiment < -0.2 ? 'توصیه می‌شود محتوای امیدبخش و مثبت در اولویت انتشار قرار گیرد.' : 'وضعیت فعلی شبکه پایدار است.'}`;
+
+    return {
+      report,
+      generated_at: now.toISOString(),
+      period_start: sixHoursAgo.toISOString(),
+      period_end: now.toISOString(),
+      top_keywords: topKeywords,
+      top_topics: topTopics,
+      avg_sentiment: avgSentiment,
+      sentiment_label: sentimentLabel,
+    };
+  }
+
+  async getLatestPosts(limit = 10) {
+    const result = await this.postService.findAll({ page: 1, limit });
+    return result.data;
+  }
 }

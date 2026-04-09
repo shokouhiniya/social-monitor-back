@@ -1,7 +1,9 @@
 import { IsNotEmpty, IsOptional, IsString, IsNumber, IsBoolean } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateFieldReportDto {
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   page_id?: number;
 
@@ -39,6 +41,7 @@ export class CreateFieldReportDto {
 
 export class FieldReportQueryDto {
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   page_id?: number;
 
@@ -47,10 +50,12 @@ export class FieldReportQueryDto {
   status?: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   page?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   limit?: number;
 }

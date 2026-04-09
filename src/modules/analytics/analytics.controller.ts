@@ -39,4 +39,14 @@ export class AnalyticsController {
   getGhostPages() {
     return this.analyticsService.getGhostPages();
   }
+
+  @Get('periodic-report')
+  getPeriodicReport() {
+    return this.analyticsService.getPeriodicReport();
+  }
+
+  @Get('latest-posts')
+  getLatestPosts(@Query('limit') limit: number) {
+    return this.analyticsService.getLatestPosts(limit || 10);
+  }
 }
