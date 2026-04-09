@@ -106,24 +106,48 @@ export class AnalyticsService {
     const now = new Date();
     const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
 
-    const [keywords, topics, sentiment] = await Promise.all([
+    const [keywords, topics, sentiment, reshares, categories, ghostPages] = await Promise.all([
       this.postService.getTrendingKeywords(1),
       this.postService.getTopicGravity(1),
       this.postService.getSentimentTimeline(undefined, 1),
+      this.postService.getReshareTree(1),
+      this.pageService.getCategoryDistribution(),
+      this.pageService.getGhostPages(),
     ]);
 
-    const topKeywords = keywords.slice(0, 5).map((k) => k.keyword);
+    const topKeywords = keywords.slice(0, 8).map((k) => k.keyword);
     const topTopics = topics.slice(0, 5).map((t) => t.topic);
+    const topReshares = reshares.slice(0, 3).map((r) => r.source);
     const avgSentiment = sentiment.length > 0
       ? sentiment.reduce((s, i) => s + Number(i.avg_sentiment || 0), 0) / sentiment.length
       : 0;
+    const totalPosts = sentiment.reduce((s, i) => s + Number(i.post_count || 0), 0);
+    const totalPages = categories.reduce((s, i) => s + Number(i.count), 0);
 
     const sentimentLabel = avgSentiment > 0.2 ? 'امیدوار' : avgSentiment < -0.2 ? 'خشمگین' : 'خنثی';
 
-    const report = `در بازه ۶ ساعت اخیر، شبکه پایش بیشترین تمرکز را بر موضوعات «${topTopics.join('، ')}» داشته است. کلمات کلیدی پرتکرار شامل ${topKeywords.join('، ')} بوده و لحن غالب شبکه ${sentimentLabel} ارزیابی می‌شود. ${avgSentiment < -0.2 ? 'توصیه می‌شود محتوای امیدبخش و مثبت در اولویت انتشار قرار گیرد.' : 'وضعیت فعلی شبکه پایدار است.'}`;
+    const paragraphs = [];
+
+    paragraphs.push(`در بازه ۶ ساعت اخیر (${sixHoursAgo.toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })} تا ${now.toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })}), مجموعاً ${totalPosts} پست از ${totalPages} پیج تحت پایش ثبت شده است.`);
+
+    if (topTopics.length > 0) {
+      paragraphs.push(`موضوعات داغ شبکه شامل «${topTopics.join('»، «')}» بوده و بیشترین حجم محتوا حول محور «${topTopics[0]}» تولید شده است.`);
+    }
+
+    paragraphs.push(`لحن غالب شبکه در این بازه ${sentimentLabel} ارزیابی می‌شود (امتیاز: ${avgSentiment.toFixed(2)} از ۱). ${avgSentiment < -0.2 ? 'فضای شبکه تنش‌زا است و توصیه می‌شود محتوای امیدبخش و مثبت در اولویت انتشار قرار گیرد.' : avgSentiment > 0.2 ? 'فضای شبکه مثبت و امیدوارکننده است. فرصت مناسبی برای تقویت روایت‌های سازنده وجود دارد.' : 'فضای شبکه نسبتاً خنثی است. می‌توان با محتوای هدفمند، لحن شبکه را به سمت مطلوب هدایت کرد.'}`);
+
+    if (topReshares.length > 0) {
+      paragraphs.push(`بیشترین بازنشر از پیج‌های «${topReshares.join('»، «')}» صورت گرفته که نشان‌دهنده نقش محوری آن‌ها در انتشار روایت است.`);
+    }
+
+    if (ghostPages.length > 0) {
+      paragraphs.push(`${ghostPages.length} پیج در وضعیت «Ghost» (کم‌فعالیت یا غیرفعال) شناسایی شده‌اند که نیاز به بررسی و احتمالاً جایگزینی دارند.`);
+    }
+
+    paragraphs.push(`پیشنهاد عملیاتی: ${avgSentiment < 0 ? 'تمرکز بر تولید محتوای امیدبخش و انسانی. از انتشار محتوای تنش‌زا خودداری شود.' : 'ادامه روند فعلی با تاکید بر موضوعات ترند. فرصت مناسب برای تزریق محتوای استراتژیک.'}`);
 
     return {
-      report,
+      report: paragraphs.join(' '),
       generated_at: now.toISOString(),
       period_start: sixHoursAgo.toISOString(),
       period_end: now.toISOString(),
@@ -131,6 +155,9 @@ export class AnalyticsService {
       top_topics: topTopics,
       avg_sentiment: avgSentiment,
       sentiment_label: sentimentLabel,
+      total_posts: totalPosts,
+      total_pages: totalPages,
+      ghost_count: ghostPages.length,
     };
   }
 
