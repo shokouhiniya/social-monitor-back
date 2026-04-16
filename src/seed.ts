@@ -37,6 +37,7 @@ function pick<T>(arr: T[]): T {
 }
 
 async function seed() {
+  return;
   await dataSource.initialize();
   console.log('Connected to database');
 

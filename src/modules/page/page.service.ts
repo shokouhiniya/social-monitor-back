@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like } from 'typeorm';
 import axios from 'axios';
 import { Page } from './page.entity';
+import { Post } from '../post/post.entity';
 import { CreatePageDto, UpdatePageDto, PageQueryDto } from './page.dto';
 
 @Injectable()
@@ -10,6 +11,8 @@ export class PageService {
   constructor(
     @InjectRepository(Page)
     private pageRepository: Repository<Page>,
+    @InjectRepository(Post)
+    private postRepository: Repository<Post>,
   ) {}
 
   async findAll(query: PageQueryDto) {
@@ -92,10 +95,44 @@ export class PageService {
       Object.assign(page, updateData);
       const saved = await this.pageRepository.save(page);
 
+      // Save posts
+      const edges = data.edge_owner_to_timeline_media?.edges || [];
+      let savedPostsCount = 0;
+      for (const edge of edges) {
+        const node = edge.node;
+        if (!node) continue;
+
+        const externalId = node.id || node.shortcode;
+        // Skip if already exists
+        const existing = await this.postRepository.findOne({ where: { external_id: externalId } });
+        if (existing) continue;
+
+        const caption = node.edge_media_to_caption?.edges?.[0]?.node?.text || '';
+        const likesCount = node.edge_liked_by?.count || node.edge_media_preview_like?.count || 0;
+        const commentsCount = node.edge_media_to_comment?.count || 0;
+        const postType = node.is_video ? (node.product_type === 'clips' ? 'reel' : 'video') : (node.__typename === 'GraphSidecar' ? 'carousel' : 'image');
+        const publishedAt = node.taken_at_timestamp ? new Date(node.taken_at_timestamp * 1000) : undefined;
+        const mediaUrl = node.display_url || node.thumbnail_src || undefined;
+
+        const post = this.postRepository.create({
+          page_id: page.id,
+          external_id: externalId,
+          caption,
+          post_type: postType,
+          media_url: mediaUrl,
+          likes_count: likesCount,
+          comments_count: commentsCount,
+          published_at: publishedAt,
+        });
+        await this.postRepository.save(post);
+        savedPostsCount++;
+      }
+
       return {
         page: saved,
         status: 'fetched',
-        message: 'دیتای پروفایل با موفقیت از اینستاگرام واکشی شد',
+        message: `دیتای پروفایل و ${savedPostsCount} پست با موفقیت واکشی شد`,
+        posts_fetched: savedPostsCount,
         raw: {
           is_verified: data.is_verified,
           is_private: data.is_private,
@@ -169,7 +206,10 @@ ${postsText || 'پستی ثبت نشده'}
   },
   "pain_points": ["دغدغه ۱", "دغدغه ۲", "دغدغه ۳"],
   "keywords": ["کلمه ۱", "کلمه ۲", "کلمه ۳", "کلمه ۴", "کلمه ۵"],
-  "language": "زبان اصلی محتوا"
+  "language": "زبان اصلی محتوا",
+  "posts_analysis": [
+    {"index": 0, "sentiment_score": عدد -1 تا 1, "sentiment_label": "angry/hopeful/neutral/sad", "topics": ["موضوع۱"], "keywords": ["کلمه۱"]}
+  ]
 }`;
 
     try {
@@ -213,6 +253,20 @@ ${postsText || 'پستی ثبت نشده'}
 
       Object.assign(page, updateData);
       const saved = await this.pageRepository.save(page);
+
+      // Update posts with sentiment analysis
+      if (analysis.posts_analysis && Array.isArray(analysis.posts_analysis)) {
+        for (const pa of analysis.posts_analysis) {
+          const post = recentPosts[pa.index];
+          if (post) {
+            post.sentiment_score = pa.sentiment_score;
+            post.sentiment_label = pa.sentiment_label;
+            post.extracted_topics = pa.topics || [];
+            post.extracted_keywords = pa.keywords || [];
+            await this.postRepository.save(post);
+          }
+        }
+      }
 
       return {
         page: saved,
