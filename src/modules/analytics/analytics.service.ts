@@ -1,12 +1,18 @@
 import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import axios from 'axios';
 import { PageService } from '../page/page.service';
 import { PostService } from '../post/post.service';
+import { StrategicAlert } from '../strategic-alert/strategic-alert.entity';
 
 @Injectable()
 export class AnalyticsService {
   constructor(
     private readonly pageService: PageService,
     private readonly postService: PostService,
+    @InjectRepository(StrategicAlert)
+    private alertRepository: Repository<StrategicAlert>,
   ) {}
 
   async getMacroDashboard() {
@@ -245,5 +251,131 @@ export class AnalyticsService {
 
   async getNarrativeBattle() {
     return await this.postService.getNarrativeBattle();
+  }
+
+  private async callLLM(prompt: string): Promise<string> {
+    const response = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'google/gemini-2.5-pro',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.4,
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 90000,
+      },
+    );
+    return response.data?.choices?.[0]?.message?.content || '';
+  }
+
+  async generateAlertsWithLLM() {
+    // Gather all data
+    const pages = await this.pageService.findAll({ page: 1, limit: 100 });
+    const keywords = await this.postService.getTrendingKeywords(7);
+    const topics = await this.postService.getTopicGravity(7);
+
+    const pagesInfo = pages.data.slice(0, 30).map((p) =>
+      `${p.name} (@${p.username}) — دسته: ${p.category || '?'}, نفوذ: ${p.influence_score}, اعتبار: ${p.credibility_score}, پایداری: ${p.consistency_rate}, فعال: ${p.is_active}`
+    ).join('\n');
+
+    const topicsInfo = topics.slice(0, 10).map((t) => `${t.topic}: ${t.count} پست`).join(', ');
+    const kwInfo = keywords.slice(0, 10).map((k) => `${k.keyword}: ${k.count}`).join(', ');
+
+    const prompt = `تو یک تحلیل‌گر استراتژیک رسانه‌ای هستی. بر اساس دیتای زیر، ۵ هشدار استراتژیک تولید کن.
+
+پیج‌ها:
+${pagesInfo}
+
+موضوعات داغ: ${topicsInfo}
+کلمات کلیدی: ${kwInfo}
+
+خروجی را دقیقاً به فرمت JSON array زیر برگردان (بدون متن اضافه):
+[
+  {
+    "title": "عنوان هشدار",
+    "message": "توضیح مفصل هشدار (حداقل ۲ جمله)",
+    "priority": "critical/high/medium/low",
+    "category": "silence_gap/trend_shift/crisis/opportunity",
+    "playbook": ["اقدام ۱", "اقدام ۲", "اقدام ۳"]
+  }
+]`;
+
+    try {
+      const content = await this.callLLM(prompt);
+      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) return { status: 'error', message: 'LLM did not return valid JSON' };
+
+      const alerts = JSON.parse(jsonMatch[0]);
+
+      // Save alerts
+      const saved: StrategicAlert[] = [];
+      for (const a of alerts) {
+        const alert = this.alertRepository.create({
+          title: a.title,
+          message: a.message,
+          priority: a.priority || 'medium',
+          category: a.category || 'other',
+          playbook: a.playbook || [],
+          status: 'active',
+          created_by: 1,
+          group_key: a.category,
+        });
+        saved.push(await this.alertRepository.save(alert));
+      }
+
+      return { status: 'success', message: `${saved.length} هشدار استراتژیک تولید شد`, alerts: saved };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  }
+
+  async generateReportWithLLM() {
+    const pages = await this.pageService.findAll({ page: 1, limit: 50 });
+    const keywords = await this.postService.getTrendingKeywords(7);
+    const topics = await this.postService.getTopicGravity(7);
+    const sentiment = await this.postService.getSentimentTimeline(undefined, 7);
+
+    const pagesInfo = pages.data.slice(0, 20).map((p) =>
+      `${p.name}: نفوذ ${p.influence_score}, اعتبار ${p.credibility_score}, دسته ${p.category}`
+    ).join('\n');
+
+    const topicsInfo = topics.slice(0, 8).map((t) => `${t.topic} (${t.count} پست)`).join(', ');
+    const kwInfo = keywords.slice(0, 10).map((k) => k.keyword).join(', ');
+    const avgSentiment = sentiment.length > 0
+      ? (sentiment.reduce((s, i) => s + Number(i.avg_sentiment || 0), 0) / sentiment.length).toFixed(2)
+      : '0';
+
+    const prompt = `تو یک تحلیل‌گر ارشد رسانه‌ای هستی. بر اساس دیتای زیر، یک گزارش تحلیلی جامع بنویس.
+
+پیج‌های شبکه:
+${pagesInfo}
+
+موضوعات داغ: ${topicsInfo}
+کلمات کلیدی: ${kwInfo}
+میانگین احساسات: ${avgSentiment}
+
+خروجی را به فرمت JSON زیر برگردان:
+{
+  "headline": "تیتر یک شبکه (یک جمله کوتاه و تاثیرگذار)",
+  "report": "گزارش مفصل (حداقل ۵ پاراگراف شامل: وضعیت کلی شبکه، موضوعات داغ، تحلیل احساسات، نقاط قوت و ضعف، پیشنهادات عملیاتی)",
+  "mood": "امیدوار/ملتهب/در وضعیت انتظار",
+  "top_topics": ["موضوع۱", "موضوع۲", "موضوع۳"],
+  "top_keywords": ["کلمه۱", "کلمه۲", "کلمه۳"]
+}`;
+
+    try {
+      const content = await this.callLLM(prompt);
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return { status: 'error', message: 'LLM did not return valid JSON' };
+
+      const report = JSON.parse(jsonMatch[0]);
+      return { status: 'success', ...report, generated_at: new Date().toISOString() };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
   }
 }

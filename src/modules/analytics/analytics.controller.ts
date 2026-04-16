@@ -84,4 +84,14 @@ export class AnalyticsController {
   getNarrativeBattle() {
     return this.analyticsService.getNarrativeBattle();
   }
+
+  @Post('generate-alerts')
+  generateAlerts() {
+    return this.analyticsService.generateAlertsWithLLM();
+  }
+
+  @Post('generate-report')
+  generateReport() {
+    return this.analyticsService.generateReportWithLLM();
+  }
 }
