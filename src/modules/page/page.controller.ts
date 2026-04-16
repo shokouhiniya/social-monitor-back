@@ -31,6 +31,11 @@ export class PageController {
     return this.pageService.getTopInfluencers(limit);
   }
 
+  @Get('analytics/segments')
+  getSegmentCounts() {
+    return this.pageService.getSegmentCounts();
+  }
+
   @Get(':id')
   findById(@Param('id') id: number) {
     return this.pageService.findById(id);

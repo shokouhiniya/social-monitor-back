@@ -13,21 +13,31 @@ export class PageService {
 
   async findAll(query: PageQueryDto) {
     const { category, platform, cluster, country, search, page = 1, limit = 20 } = query;
-    const where: any = {};
+    const segment = (query as any).segment;
 
-    if (category) where.category = category;
-    if (platform) where.platform = platform;
-    if (cluster) where.cluster = cluster;
-    if (country) where.country = country;
-    if (search) where.name = Like(`%${search}%`);
+    const qb = this.pageRepository.createQueryBuilder('page');
 
-    const [data, total] = await this.pageRepository.findAndCount({
-      where,
-      skip: (page - 1) * limit,
-      take: limit,
-      order: { influence_score: 'DESC' },
-    });
+    if (category) qb.andWhere('page.category = :category', { category });
+    if (platform) qb.andWhere('page.platform = :platform', { platform });
+    if (cluster) qb.andWhere('page.cluster = :cluster', { cluster });
+    if (country) qb.andWhere('page.country = :country', { country });
+    if (search) qb.andWhere('page.name ILIKE :search', { search: `%${search}%` });
 
+    // Segment filters
+    if (segment === 'ghost') {
+      qb.andWhere('(page.consistency_rate < 2 OR page.is_active = false)');
+    } else if (segment === 'high_influence_low_credibility') {
+      qb.andWhere('page.influence_score > 7 AND page.credibility_score < 4');
+    } else if (segment === 'new') {
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      qb.andWhere('page.created_at >= :weekAgo', { weekAgo });
+    }
+
+    qb.orderBy('page.influence_score', 'DESC');
+    qb.skip((page - 1) * limit).take(limit);
+
+    const [data, total] = await qb.getManyAndCount();
     return { data, total, page, limit };
   }
 
@@ -93,7 +103,6 @@ export class PageService {
   }
 
   async getGhostPages() {
-    // Pages with low consistency, low activity, or potential content deletion
     return await this.pageRepository
       .createQueryBuilder('page')
       .where('page.consistency_rate < :threshold', { threshold: 2 })
@@ -101,5 +110,19 @@ export class PageService {
       .orderBy('page.consistency_rate', 'ASC')
       .limit(50)
       .getMany();
+  }
+
+  async getSegmentCounts() {
+    const [total, ghost, highInfluenceLowCred] = await Promise.all([
+      this.pageRepository.count(),
+      this.pageRepository.createQueryBuilder('page')
+        .where('page.consistency_rate < 2 OR page.is_active = false')
+        .getCount(),
+      this.pageRepository.createQueryBuilder('page')
+        .where('page.influence_score > 7 AND page.credibility_score < 4')
+        .getCount(),
+    ]);
+
+    return { total, ghost, high_influence_low_credibility: highInfluenceLowCred };
   }
 }
