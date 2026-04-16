@@ -11,6 +11,11 @@ export class FieldReportController {
     return this.fieldReportService.findAll(query);
   }
 
+  @Get('stats')
+  getStats() {
+    return this.fieldReportService.getStats();
+  }
+
   @Get(':id')
   findById(@Param('id') id: number) {
     return this.fieldReportService.findById(id);

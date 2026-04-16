@@ -60,4 +60,47 @@ export class FieldReportService {
       order: { created_at: 'DESC' },
     });
   }
+
+  async getStats() {
+    const all = await this.reportRepository.find();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayReports = all.filter((r) => new Date(r.created_at) >= today);
+
+    const bySource: Record<string, number> = {};
+    for (const r of all) {
+      const src = r.source_type || 'manual';
+      bySource[src] = (bySource[src] || 0) + 1;
+    }
+
+    // Top reported pages
+    const pageCount: Record<number, number> = {};
+    for (const r of all) {
+      if (r.page_id) pageCount[r.page_id] = (pageCount[r.page_id] || 0) + 1;
+    }
+    const topPages = Object.entries(pageCount)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([id, count]) => ({ page_id: Number(id), count }));
+
+    // Top reporters
+    const reporterCount: Record<number, number> = {};
+    for (const r of all) {
+      reporterCount[r.reporter_id] = (reporterCount[r.reporter_id] || 0) + 1;
+    }
+    const topReporters = Object.entries(reporterCount)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([id, count]) => ({ reporter_id: Number(id), count }));
+
+    return {
+      total: all.length,
+      today: todayReports.length,
+      pending: all.filter((r) => r.status === 'pending').length,
+      processed: all.filter((r) => r.status === 'processed').length,
+      by_source: bySource,
+      top_pages: topPages,
+      top_reporters: topReporters,
+    };
+  }
 }
