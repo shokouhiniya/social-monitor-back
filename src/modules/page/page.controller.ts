@@ -36,6 +36,11 @@ export class PageController {
     return this.pageService.getSegmentCounts();
   }
 
+  @Get(':id/related')
+  getRelatedPages(@Param('id') id: number) {
+    return this.pageService.getRelatedPages(id);
+  }
+
   @Get(':id')
   findById(@Param('id') id: number) {
     return this.pageService.findById(id);

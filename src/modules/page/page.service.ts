@@ -125,4 +125,21 @@ export class PageService {
 
     return { total, ghost, high_influence_low_credibility: highInfluenceLowCred };
   }
+
+  async getRelatedPages(pageId: number, limit = 8) {
+    const page = await this.pageRepository.findOne({ where: { id: pageId } });
+    if (!page) return [];
+
+    const qb = this.pageRepository.createQueryBuilder('p')
+      .where('p.id != :pageId', { pageId });
+
+    if (page.cluster) {
+      qb.andWhere('(p.cluster = :cluster OR p.category = :category)', { cluster: page.cluster, category: page.category });
+    } else if (page.category) {
+      qb.andWhere('p.category = :category', { category: page.category });
+    }
+
+    qb.orderBy('p.influence_score', 'DESC').limit(limit);
+    return await qb.getMany();
+  }
 }
