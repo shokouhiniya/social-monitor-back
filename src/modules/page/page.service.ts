@@ -55,6 +55,32 @@ export class PageService {
     return await this.pageRepository.save(page);
   }
 
+  async createBulk(dtos: CreatePageDto[]) {
+    const pages = this.pageRepository.create(dtos);
+    return await this.pageRepository.save(pages);
+  }
+
+  async fetchPageData(id: number) {
+    // This is a placeholder for the actual API call to fetch page data
+    // In production, this would call Instagram/Twitter API or a scraper
+    const page = await this.pageRepository.findOne({ where: { id } });
+    if (!page) throw new HttpException('Page not found', 404);
+
+    // Simulate fetched data
+    const fetchedData: any = {
+      followers_count: page.followers_count || Math.floor(Math.random() * 500000),
+      following_count: page.following_count || Math.floor(Math.random() * 2000),
+      bio: page.bio || `بیو واکشی‌شده برای @${page.username}`,
+      profile_image_url: page.profile_image_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(page.name)}&background=random`,
+    };
+
+    // Mark as fetched
+    Object.assign(page, fetchedData);
+    const saved = await this.pageRepository.save(page);
+
+    return { page: saved, status: 'fetched', message: 'دیتای اولیه پیج با موفقیت واکشی شد' };
+  }
+
   async update(id: number, dto: UpdatePageDto) {
     const page = await this.findById(id);
     Object.assign(page, dto);

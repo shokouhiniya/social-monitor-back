@@ -51,6 +51,16 @@ export class PageController {
     return this.pageService.create(dto);
   }
 
+  @Post('bulk')
+  createBulk(@Body() dtos: CreatePageDto[]) {
+    return this.pageService.createBulk(dtos);
+  }
+
+  @Post(':id/fetch')
+  fetchPageData(@Param('id') id: number) {
+    return this.pageService.fetchPageData(id);
+  }
+
   @Put(':id')
   update(@Param('id') id: number, @Body() dto: UpdatePageDto) {
     return this.pageService.update(id, dto);
