@@ -61,24 +61,53 @@ export class PageService {
   }
 
   async fetchPageData(id: number) {
-    // This is a placeholder for the actual API call to fetch page data
-    // In production, this would call Instagram/Twitter API or a scraper
     const page = await this.pageRepository.findOne({ where: { id } });
     if (!page) throw new HttpException('Page not found', 404);
+    if (!page.username) throw new HttpException('Username is required for fetching', 400);
 
-    // Simulate fetched data
-    const fetchedData: any = {
-      followers_count: page.followers_count || Math.floor(Math.random() * 500000),
-      following_count: page.following_count || Math.floor(Math.random() * 2000),
-      bio: page.bio || `بیو واکشی‌شده برای @${page.username}`,
-      profile_image_url: page.profile_image_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(page.name)}&background=random`,
-    };
+    try {
+      const axios = require('axios');
+      const response = await axios.get('https://instagram-looter2.p.rapidapi.com/profile', {
+        params: { username: page.username },
+        headers: {
+          'x-rapidapi-key': process.env.RAPIDAPI_KEY || 'b79509e210msh113fb4eced81297p155bcajsn897485f63480',
+          'x-rapidapi-host': 'instagram-looter2.p.rapidapi.com',
+        },
+        timeout: 15000,
+      });
 
-    // Mark as fetched
-    Object.assign(page, fetchedData);
-    const saved = await this.pageRepository.save(page);
+      const data = response.data;
+      if (!data || !data.status) {
+        throw new HttpException('Failed to fetch profile data', 502);
+      }
 
-    return { page: saved, status: 'fetched', message: 'دیتای اولیه پیج با موفقیت واکشی شد' };
+      const updateData: any = {
+        name: data.full_name || page.name,
+        bio: data.biography || page.bio,
+        followers_count: data.edge_followed_by?.count ?? page.followers_count,
+        following_count: data.edge_follow?.count ?? page.following_count,
+        profile_image_url: data.profile_pic_url_hd || data.profile_pic_url || page.profile_image_url,
+      };
+
+      Object.assign(page, updateData);
+      const saved = await this.pageRepository.save(page);
+
+      return {
+        page: saved,
+        status: 'fetched',
+        message: 'دیتای پروفایل با موفقیت از اینستاگرام واکشی شد',
+        raw: {
+          is_verified: data.is_verified,
+          is_private: data.is_private,
+          is_business: data.is_business_account,
+          posts_count: data.edge_owner_to_timeline_media?.count,
+          category: data.category_name || data.business_category_name,
+        },
+      };
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException(`خطا در واکشی دیتا: ${error.message}`, 502);
+    }
   }
 
   async update(id: number, dto: UpdatePageDto) {
