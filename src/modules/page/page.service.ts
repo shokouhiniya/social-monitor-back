@@ -1,6 +1,7 @@
 import { HttpException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like } from 'typeorm';
+import axios from 'axios';
 import { Page } from './page.entity';
 import { CreatePageDto, UpdatePageDto, PageQueryDto } from './page.dto';
 
@@ -66,7 +67,6 @@ export class PageService {
     if (!page.username) throw new HttpException('Username is required for fetching', 400);
 
     try {
-      const axios = require('axios');
       const response = await axios.get('https://instagram-looter2.p.rapidapi.com/profile', {
         params: { username: page.username },
         headers: {
