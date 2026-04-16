@@ -107,16 +107,17 @@ export class PageService {
     } catch (error) {
       if (error instanceof HttpException) throw error;
 
-      // Fallback: if API fails, use basic data
-      const fallbackData: any = {
-        profile_image_url: page.profile_image_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(page.name)}&background=random&size=200`,
-      };
-      Object.assign(page, fallbackData);
-      await this.pageRepository.save(page);
-
       const statusCode = error?.response?.status || 502;
       const apiMessage = error?.response?.data?.message || error.message;
-      throw new HttpException(`واکشی ناموفق (${statusCode}): ${apiMessage}. آواتار پیش‌فرض ست شد.`, statusCode === 451 ? 429 : 502);
+
+      // If API blocked (451/403), set fallback avatar
+      if (statusCode === 451 || statusCode === 403) {
+        page.profile_image_url = page.profile_image_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(page.name)}&background=random&size=200`;
+        await this.pageRepository.save(page);
+        throw new HttpException(`API اینستاگرام از این IP مسدود است (${statusCode}). لطفاً VPN را بررسی کنید.`, 503);
+      }
+
+      throw new HttpException(`واکشی ناموفق (${statusCode}): ${apiMessage}`, 502);
     }
   }
 
