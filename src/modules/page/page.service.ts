@@ -110,6 +110,111 @@ export class PageService {
     }
   }
 
+  async processWithLLM(id: number) {
+    const page = await this.pageRepository.findOne({
+      where: { id },
+      relations: ['posts'],
+    });
+    if (!page) throw new HttpException('Page not found', 404);
+
+    // Build context for LLM
+    const recentPosts = (page.posts || [])
+      .sort((a, b) => new Date(b.published_at || b.created_at).getTime() - new Date(a.published_at || a.created_at).getTime())
+      .slice(0, 10);
+
+    const postsText = recentPosts.map((p, i) =>
+      `پست ${i + 1}: "${(p.caption || '').slice(0, 200)}" (لایک: ${p.likes_count}, کامنت: ${p.comments_count}, لحن: ${p.sentiment_label || 'نامشخص'})`
+    ).join('\n');
+
+    const prompt = `تو یک تحلیل‌گر رسانه‌ای هوشمند هستی. اطلاعات زیر مربوط به یک پیج اینستاگرامی است. لطفاً تحلیل کامل ارائه بده.
+
+اطلاعات پیج:
+- نام: ${page.name}
+- یوزرنیم: @${page.username}
+- پلتفرم: ${page.platform}
+- بیو: ${page.bio || 'ندارد'}
+- فالوور: ${page.followers_count}
+- فالووینگ: ${page.following_count}
+- دسته‌بندی فعلی: ${page.category || 'نامشخص'}
+- کشور: ${page.country || 'نامشخص'}
+
+آخرین پست‌ها:
+${postsText || 'پستی ثبت نشده'}
+
+لطفاً خروجی را دقیقاً به فرمت JSON زیر برگردان (بدون هیچ متن اضافه):
+{
+  "category": "دسته‌بندی پیشنهادی (news/activist/celebrity/lifestyle/economy/local_news/politician/documentary/religious/art/student/health/technology/culture/sports/analyst)",
+  "cluster": "نام خوشه معنایی (مثلاً: رسانه مقاومت، لایف‌استایل، رسانه بین‌المللی)",
+  "credibility_score": عدد از 0 تا 10,
+  "influence_score": عدد از 0 تا 10,
+  "consistency_rate": عدد از 0 تا 10,
+  "persona_radar": {
+    "aggressive_defensive": عدد 0 تا 100,
+    "producer_resharer": عدد 0 تا 100,
+    "visual_textual": عدد 0 تا 100,
+    "formal_informal": عدد 0 تا 100,
+    "local_global": عدد 0 تا 100,
+    "interactive_oneway": عدد 0 تا 100
+  },
+  "pain_points": ["دغدغه ۱", "دغدغه ۲", "دغدغه ۳"],
+  "keywords": ["کلمه ۱", "کلمه ۲", "کلمه ۳", "کلمه ۴", "کلمه ۵"],
+  "language": "زبان اصلی محتوا"
+}`;
+
+    try {
+      const response = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+          model: 'google/gemini-2.5-pro',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.3,
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 60000,
+        },
+      );
+
+      const content = response.data?.choices?.[0]?.message?.content || '';
+
+      // Extract JSON from response
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new HttpException('LLM response did not contain valid JSON', 502);
+      }
+
+      const analysis = JSON.parse(jsonMatch[0]);
+
+      // Update page with LLM analysis
+      const updateData: any = {};
+      if (analysis.category) updateData.category = analysis.category;
+      if (analysis.cluster) updateData.cluster = analysis.cluster;
+      if (analysis.credibility_score !== undefined) updateData.credibility_score = analysis.credibility_score;
+      if (analysis.influence_score !== undefined) updateData.influence_score = analysis.influence_score;
+      if (analysis.consistency_rate !== undefined) updateData.consistency_rate = analysis.consistency_rate;
+      if (analysis.persona_radar) updateData.persona_radar = analysis.persona_radar;
+      if (analysis.pain_points) updateData.pain_points = analysis.pain_points;
+      if (analysis.keywords) updateData.keywords = analysis.keywords;
+      if (analysis.language) updateData.language = analysis.language;
+
+      Object.assign(page, updateData);
+      const saved = await this.pageRepository.save(page);
+
+      return {
+        page: saved,
+        status: 'processed',
+        message: 'تحلیل هوشمند با موفقیت انجام شد',
+        analysis,
+      };
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException(`خطا در پردازش LLM: ${error.message}`, 502);
+    }
+  }
+
   async update(id: number, dto: UpdatePageDto) {
     const page = await this.findById(id);
     Object.assign(page, dto);
