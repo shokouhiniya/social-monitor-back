@@ -73,12 +73,12 @@ export class PageService {
           'x-rapidapi-key': process.env.RAPIDAPI_KEY || 'b79509e210msh113fb4eced81297p155bcajsn897485f63480',
           'x-rapidapi-host': 'instagram-looter2.p.rapidapi.com',
         },
-        timeout: 15000,
+        timeout: 20000,
       });
 
       const data = response.data;
       if (!data || !data.status) {
-        throw new HttpException('Failed to fetch profile data', 502);
+        throw new Error('Invalid response from API');
       }
 
       const updateData: any = {
@@ -106,7 +106,17 @@ export class PageService {
       };
     } catch (error) {
       if (error instanceof HttpException) throw error;
-      throw new HttpException(`خطا در واکشی دیتا: ${error.message}`, 502);
+
+      // Fallback: if API fails, use basic data
+      const fallbackData: any = {
+        profile_image_url: page.profile_image_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(page.name)}&background=random&size=200`,
+      };
+      Object.assign(page, fallbackData);
+      await this.pageRepository.save(page);
+
+      const statusCode = error?.response?.status || 502;
+      const apiMessage = error?.response?.data?.message || error.message;
+      throw new HttpException(`واکشی ناموفق (${statusCode}): ${apiMessage}. آواتار پیش‌فرض ست شد.`, statusCode === 451 ? 429 : 502);
     }
   }
 
