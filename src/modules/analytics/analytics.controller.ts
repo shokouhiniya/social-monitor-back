@@ -69,4 +69,19 @@ export class AnalyticsController {
   getAiSynthesizer() {
     return this.analyticsService.getAiSynthesizer();
   }
+
+  @Get('keyword-velocity')
+  getKeywordVelocity() {
+    return this.analyticsService.getKeywordVelocity();
+  }
+
+  @Get('sentiment-influence-matrix')
+  getSentimentInfluenceMatrix() {
+    return this.analyticsService.getSentimentInfluenceMatrix();
+  }
+
+  @Get('narrative-battle')
+  getNarrativeBattle() {
+    return this.analyticsService.getNarrativeBattle();
+  }
 }

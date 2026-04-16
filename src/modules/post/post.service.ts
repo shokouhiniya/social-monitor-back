@@ -211,4 +211,94 @@ export class PostService {
       .limit(limit)
       .getMany();
   }
+
+  async getKeywordVelocity() {
+    const now = new Date();
+    const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const prev24h = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+
+    const [recentPosts, olderPosts] = await Promise.all([
+      this.postRepository.createQueryBuilder('post')
+        .select(['post.extracted_keywords'])
+        .where('post.published_at >= :since', { since: last24h })
+        .getMany(),
+      this.postRepository.createQueryBuilder('post')
+        .select(['post.extracted_keywords'])
+        .where('post.published_at >= :start AND post.published_at < :end', { start: prev24h, end: last24h })
+        .getMany(),
+    ]);
+
+    const recentMap: Record<string, number> = {};
+    const olderMap: Record<string, number> = {};
+
+    for (const p of recentPosts) {
+      if (p.extracted_keywords) for (const kw of p.extracted_keywords) recentMap[kw] = (recentMap[kw] || 0) + 1;
+    }
+    for (const p of olderPosts) {
+      if (p.extracted_keywords) for (const kw of p.extracted_keywords) olderMap[kw] = (olderMap[kw] || 0) + 1;
+    }
+
+    const velocity = Object.entries(recentMap).map(([keyword, count]) => {
+      const prev = olderMap[keyword] || 0;
+      const change = prev > 0 ? Math.round(((count - prev) / prev) * 100) : (count > 1 ? 999 : 100);
+      return { keyword, count, prev_count: prev, change };
+    }).sort((a, b) => b.change - a.change);
+
+    return velocity.slice(0, 15);
+  }
+
+  async getSentimentInfluenceMatrix() {
+    const posts = await this.postRepository
+      .createQueryBuilder('post')
+      .leftJoinAndSelect('post.page', 'page')
+      .where('post.published_at >= :since', { since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) })
+      .getMany();
+
+    // Group by page, calculate avg sentiment and total engagement
+    const pageMap: Record<number, { name: string; influence: number; avg_sentiment: number; post_count: number; total_engagement: number }> = {};
+
+    for (const post of posts) {
+      if (!post.page) continue;
+      if (!pageMap[post.page_id]) {
+        pageMap[post.page_id] = {
+          name: post.page.name,
+          influence: post.page.influence_score || 0,
+          avg_sentiment: 0,
+          post_count: 0,
+          total_engagement: 0,
+        };
+      }
+      const p = pageMap[post.page_id];
+      p.avg_sentiment += (post.sentiment_score || 0);
+      p.post_count++;
+      p.total_engagement += (post.likes_count || 0) + (post.comments_count || 0) + (post.shares_count || 0);
+    }
+
+    return Object.values(pageMap).map((p) => ({
+      name: p.name,
+      influence: p.influence,
+      sentiment: p.post_count > 0 ? Math.round((p.avg_sentiment / p.post_count) * 100) / 100 : 0,
+      engagement: p.total_engagement,
+      post_count: p.post_count,
+    }));
+  }
+
+  async getNarrativeBattle() {
+    const topics = await this.getTopicGravity(7);
+    const top3 = topics.slice(0, 3);
+
+    return top3.map((topic) => {
+      const total = Object.values(topic.sentiments).reduce((s: number, v: number) => s + v, 0);
+      const positive = ((topic.sentiments['hopeful'] || 0) / (total || 1)) * 100;
+      const negative = ((topic.sentiments['angry'] || 0) / (total || 1)) * 100;
+      const neutral = 100 - positive - negative;
+      return {
+        topic: topic.topic,
+        total_posts: topic.count,
+        positive: Math.round(positive),
+        negative: Math.round(negative),
+        neutral: Math.round(neutral),
+      };
+    });
+  }
 }

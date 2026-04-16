@@ -234,4 +234,16 @@ export class AnalyticsService {
       sentiment_score: avgSentiment,
     };
   }
+
+  async getKeywordVelocity() {
+    return await this.postService.getKeywordVelocity();
+  }
+
+  async getSentimentInfluenceMatrix() {
+    return await this.postService.getSentimentInfluenceMatrix();
+  }
+
+  async getNarrativeBattle() {
+    return await this.postService.getNarrativeBattle();
+  }
 }
