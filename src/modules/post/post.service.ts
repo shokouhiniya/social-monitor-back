@@ -301,4 +301,59 @@ export class PostService {
       };
     });
   }
+
+  async getPostsFeed(query: any) {
+    const { sentiment_label, post_type, search, topic, outliers_only, page = 1, limit = 20 } = query;
+
+    const qb = this.postRepository.createQueryBuilder('post')
+      .leftJoinAndSelect('post.page', 'page');
+
+    if (sentiment_label) qb.andWhere('post.sentiment_label = :sentiment_label', { sentiment_label });
+    if (post_type) qb.andWhere('post.post_type = :post_type', { post_type });
+    if (search) qb.andWhere('post.caption ILIKE :search', { search: `%${search}%` });
+    if (topic) qb.andWhere(':topic = ANY(post.extracted_topics)', { topic });
+
+    qb.orderBy('post.published_at', 'DESC');
+    qb.skip((page - 1) * limit).take(limit);
+
+    const [data, total] = await qb.getManyAndCount();
+
+    // Calculate avg engagement per page for outlier detection
+    const enriched = data.map((post) => {
+      const engagement = (post.likes_count || 0) + (post.comments_count || 0) + (post.shares_count || 0);
+      const avgEngagement = post.page ? Math.max((post.page.followers_count || 0) * 0.02, 100) : 100;
+      const engagementRatio = avgEngagement > 0 ? engagement / avgEngagement : 0;
+      return {
+        ...post,
+        engagement,
+        engagement_ratio: Math.round(engagementRatio * 100) / 100,
+        is_outlier: engagementRatio > 2,
+        is_viral: engagementRatio > 5,
+      };
+    });
+
+    const filtered = outliers_only === 'true' ? enriched.filter((p) => p.is_outlier) : enriched;
+
+    return { data: filtered, total, page, limit };
+  }
+
+  async getTopicClusters() {
+    const topics = await this.getTopicGravity(7);
+    const posts = await this.postRepository
+      .createQueryBuilder('post')
+      .leftJoinAndSelect('post.page', 'page')
+      .where('post.published_at >= :since', { since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) })
+      .orderBy('post.published_at', 'DESC')
+      .getMany();
+
+    return topics.slice(0, 8).map((topic) => {
+      const relatedPosts = posts.filter((p) => p.extracted_topics?.includes(topic.topic)).slice(0, 5);
+      return {
+        topic: topic.topic,
+        count: topic.count,
+        sentiments: topic.sentiments,
+        posts: relatedPosts,
+      };
+    });
+  }
 }

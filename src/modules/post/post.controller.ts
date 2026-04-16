@@ -34,6 +34,16 @@ export class PostController {
     return this.postService.getReshareTree(days);
   }
 
+  @Get('feed')
+  getPostsFeed(@Query() query: any) {
+    return this.postService.getPostsFeed(query);
+  }
+
+  @Get('topic-clusters')
+  getTopicClusters() {
+    return this.postService.getTopicClusters();
+  }
+
   @Get(':id')
   findById(@Param('id') id: number) {
     return this.postService.findById(id);
