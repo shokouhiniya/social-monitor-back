@@ -1,14 +1,24 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { StrategicAlertService } from './strategic-alert.service';
-import { CreateStrategicAlertDto } from './strategic-alert.dto';
+import { CreateStrategicAlertDto, UpdateAlertStatusDto } from './strategic-alert.dto';
 
 @Controller('strategic-alerts')
 export class StrategicAlertController {
   constructor(private readonly strategicAlertService: StrategicAlertService) {}
 
   @Get()
-  findAll() {
-    return this.strategicAlertService.findAll();
+  findAll(@Query('status') status: string) {
+    return this.strategicAlertService.findAll(status);
+  }
+
+  @Get('stats')
+  getStats() {
+    return this.strategicAlertService.getStats();
+  }
+
+  @Get('grouped')
+  getGrouped() {
+    return this.strategicAlertService.getGrouped();
   }
 
   @Get(':id')
@@ -21,9 +31,9 @@ export class StrategicAlertController {
     return this.strategicAlertService.create(dto);
   }
 
-  @Patch(':id/acknowledge')
-  acknowledge(@Param('id') id: number) {
-    return this.strategicAlertService.acknowledge(id);
+  @Patch(':id/status')
+  updateStatus(@Param('id') id: number, @Body() dto: UpdateAlertStatusDto) {
+    return this.strategicAlertService.updateStatus(id, dto);
   }
 
   @Delete(':id')

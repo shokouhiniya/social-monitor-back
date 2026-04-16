@@ -25,5 +25,30 @@ export class CreateStrategicAlertDto {
   created_by: number;
 
   @IsOptional()
+  @IsString()
+  assigned_to?: string;
+
+  @IsOptional()
+  @IsString()
+  evidence_url?: string;
+
+  @IsOptional()
+  @IsString()
+  group_key?: string;
+
+  @IsOptional()
+  playbook?: string[];
+
+  @IsOptional()
   expires_at?: Date;
+}
+
+export class UpdateAlertStatusDto {
+  @IsNotEmpty()
+  @IsString()
+  status: string;
+
+  @IsOptional()
+  @IsString()
+  assigned_to?: string;
 }
