@@ -165,4 +165,73 @@ export class AnalyticsService {
     const result = await this.postService.findAll({ page: 1, limit });
     return result.data;
   }
+
+  async getHighImpactPosts(limit = 5) {
+    return await this.postService.getHighImpactPosts(limit);
+  }
+
+  async getNarrativeHealth() {
+    const [keywords, topics, alignment] = await Promise.all([
+      this.postService.getTrendingKeywords(7),
+      this.postService.getTopicGravity(7),
+      this.getAlignmentIndex(),
+    ]);
+
+    // Target narrative keywords (configurable)
+    const targetKeywords = ['مقاومت', 'فلسطین', 'غزه', 'حقوق بشر', 'عدالت'];
+    const allKeywords = keywords.map((k) => k.keyword.toLowerCase());
+    const matchCount = targetKeywords.filter((tk) => allKeywords.includes(tk.toLowerCase())).length;
+    const narrativeScore = Math.round((matchCount / targetKeywords.length) * 100);
+
+    // Find deviation keywords
+    const deviationKeywords = keywords
+      .filter((k) => !targetKeywords.some((tk) => tk.toLowerCase() === k.keyword.toLowerCase()))
+      .slice(0, 2)
+      .map((k) => k.keyword);
+
+    const label = narrativeScore > 70 ? 'انطباق بالا' : narrativeScore > 40 ? 'خنثی' : 'انحراف شدید';
+
+    return {
+      score: narrativeScore,
+      label,
+      target_keywords: targetKeywords,
+      deviation_keywords: deviationKeywords,
+      alignment_index: alignment.alignment_index,
+    };
+  }
+
+  async getCrisisCorridor() {
+    const ghostPages = await this.pageService.getGhostPages();
+    // Also get pages with very negative sentiment
+    const allPages = await this.pageService.findAll({ page: 1, limit: 100 });
+    const crisisPages = allPages.data.filter(
+      (p) => !p.is_active || p.consistency_rate < 2 || p.credibility_score < 2,
+    );
+    return crisisPages.slice(0, 10);
+  }
+
+  async getAiSynthesizer() {
+    const [keywords, topics, sentiment] = await Promise.all([
+      this.postService.getTrendingKeywords(1),
+      this.postService.getTopicGravity(1),
+      this.postService.getSentimentTimeline(undefined, 1),
+    ]);
+
+    const topTopic = topics[0]?.topic || 'بدون موضوع خاص';
+    const topKeyword = keywords[0]?.keyword || '';
+    const avgSentiment = sentiment.length > 0
+      ? sentiment.reduce((s, i) => s + Number(i.avg_sentiment || 0), 0) / sentiment.length
+      : 0;
+
+    const mood = avgSentiment > 0.2 ? 'امیدوار' : avgSentiment < -0.2 ? 'ملتهب' : 'در وضعیت انتظار';
+    const headline = `امروز شبکه ${mood} است؛ تمرکز اصلی روی «${topTopic}» ${topKeyword ? `و «${topKeyword}»` : ''} قرار دارد.`;
+
+    return {
+      headline,
+      mood,
+      top_topic: topTopic,
+      top_keyword: topKeyword,
+      sentiment_score: avgSentiment,
+    };
+  }
 }

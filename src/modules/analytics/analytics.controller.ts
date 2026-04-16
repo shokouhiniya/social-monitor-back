@@ -49,4 +49,24 @@ export class AnalyticsController {
   getLatestPosts(@Query('limit') limit: number) {
     return this.analyticsService.getLatestPosts(limit || 10);
   }
+
+  @Get('high-impact-posts')
+  getHighImpactPosts(@Query('limit') limit: number) {
+    return this.analyticsService.getHighImpactPosts(limit || 5);
+  }
+
+  @Get('narrative-health')
+  getNarrativeHealth() {
+    return this.analyticsService.getNarrativeHealth();
+  }
+
+  @Get('crisis-corridor')
+  getCrisisCorridor() {
+    return this.analyticsService.getCrisisCorridor();
+  }
+
+  @Get('ai-synthesizer')
+  getAiSynthesizer() {
+    return this.analyticsService.getAiSynthesizer();
+  }
 }

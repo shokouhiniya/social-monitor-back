@@ -198,4 +198,17 @@ export class PostService {
 
     return result;
   }
+
+  async getHighImpactPosts(limit = 5) {
+    const since = new Date();
+    since.setHours(since.getHours() - 24);
+
+    return await this.postRepository
+      .createQueryBuilder('post')
+      .leftJoinAndSelect('post.page', 'page')
+      .where('post.published_at >= :since', { since })
+      .orderBy('(post.likes_count + post.comments_count + post.shares_count)', 'DESC')
+      .limit(limit)
+      .getMany();
+  }
 }
