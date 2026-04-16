@@ -365,6 +365,18 @@ ${postsText || 'پستی ثبت نشده'}
     }
 
     qb.orderBy('p.influence_score', 'DESC').limit(limit);
-    return await qb.getMany();
+    let results = await qb.getMany();
+
+    // Fallback: if no related pages found, return top pages
+    if (results.length === 0) {
+      results = await this.pageRepository.find({
+        where: {},
+        order: { influence_score: 'DESC' },
+        take: limit,
+      });
+      results = results.filter((p) => p.id !== pageId);
+    }
+
+    return results;
   }
 }
