@@ -5,9 +5,10 @@ import { AnalyticsService } from './analytics.service';
 import { PageModule } from '../page/page.module';
 import { PostModule } from '../post/post.module';
 import { StrategicAlert } from '../strategic-alert/strategic-alert.entity';
+import { SettingsModule } from '../settings/settings.module';
 
 @Module({
-  imports: [PageModule, PostModule, TypeOrmModule.forFeature([StrategicAlert])],
+  imports: [PageModule, PostModule, SettingsModule, TypeOrmModule.forFeature([StrategicAlert])],
   controllers: [AnalyticsController],
   providers: [AnalyticsService],
 })

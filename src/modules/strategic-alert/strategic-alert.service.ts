@@ -79,8 +79,8 @@ export class StrategicAlertService {
     };
   }
 
-  async getGrouped() {
-    const alerts = await this.findAll();
+  async getGrouped(status?: string) {
+    const alerts = await this.findAll(status);
 
     // Group by category
     const groups: Record<string, StrategicAlert[]> = {};

@@ -5,6 +5,7 @@ import axios from 'axios';
 import { Page } from './page.entity';
 import { Post } from '../post/post.entity';
 import { CreatePageDto, UpdatePageDto, PageQueryDto } from './page.dto';
+import { SettingsService } from '../settings/settings.service';
 
 @Injectable()
 export class PageService {
@@ -13,6 +14,7 @@ export class PageService {
     private pageRepository: Repository<Page>,
     @InjectRepository(Post)
     private postRepository: Repository<Post>,
+    private readonly settingsService: SettingsService,
   ) {}
 
   async findAll(query: PageQueryDto) {
@@ -173,7 +175,15 @@ export class PageService {
       `پست ${i + 1}: "${(p.caption || '').slice(0, 200)}" (لایک: ${p.likes_count}, کامنت: ${p.comments_count}, لحن: ${p.sentiment_label || 'نامشخص'})`
     ).join('\n');
 
-    const prompt = `تو یک تحلیل‌گر رسانه‌ای هوشمند هستی. اطلاعات زیر مربوط به یک پیج اینستاگرامی است. لطفاً تحلیل کامل ارائه بده.
+    // Load system prompt, extra instructions, model and API key from settings
+    const [systemPrompt, extraInstructions, apiKey, model] = await Promise.all([
+      this.settingsService.get('prompt_page_analysis'),
+      this.settingsService.get('prompt_page_analysis_extra'),
+      this.settingsService.get('openrouter_key'),
+      this.settingsService.get('llm_model'),
+    ]);
+
+    const prompt = `${systemPrompt || 'تو یک تحلیل‌گر رسانه‌ای هوشمند هستی. اطلاعات زیر مربوط به یک پیج اینستاگرامی است. لطفاً تحلیل کامل ارائه بده.'}
 
 اطلاعات پیج:
 - نام: ${page.name}
@@ -187,7 +197,7 @@ export class PageService {
 
 آخرین پست‌ها:
 ${postsText || 'پستی ثبت نشده'}
-
+${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : ''}
 لطفاً خروجی را دقیقاً به فرمت JSON زیر برگردان (بدون هیچ متن اضافه):
 {
   "category": "دسته‌بندی پیشنهادی (news/activist/celebrity/lifestyle/economy/local_news/politician/documentary/religious/art/student/health/technology/culture/sports/analyst)",
@@ -215,13 +225,13 @@ ${postsText || 'پستی ثبت نشده'}
       const response = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
-          model: 'google/gemini-2.5-pro',
+          model: model || 'google/gemini-2.5-pro',
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.3,
         },
         {
           headers: {
-            'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            'Authorization': `Bearer ${apiKey || process.env.OPENROUTER_API_KEY}`,
             'Content-Type': 'application/json',
           },
           timeout: 60000,

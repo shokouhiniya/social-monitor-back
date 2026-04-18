@@ -17,8 +17,8 @@ export class StrategicAlertController {
   }
 
   @Get('grouped')
-  getGrouped() {
-    return this.strategicAlertService.getGrouped();
+  getGrouped(@Query('status') status: string) {
+    return this.strategicAlertService.getGrouped(status);
   }
 
   @Get(':id')

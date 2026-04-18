@@ -6,6 +6,7 @@ import axios from 'axios';
 import { PageService } from '../page/page.service';
 import { PostService } from '../post/post.service';
 import { StrategicAlert } from '../strategic-alert/strategic-alert.entity';
+import { SettingsService } from '../settings/settings.service';
 
 @Injectable()
 export class AnalyticsService {
@@ -17,6 +18,7 @@ export class AnalyticsService {
   constructor(
     private readonly pageService: PageService,
     private readonly postService: PostService,
+    private readonly settingsService: SettingsService,
     @InjectRepository(StrategicAlert)
     private alertRepository: Repository<StrategicAlert>,
   ) {}
@@ -59,17 +61,43 @@ export class AnalyticsService {
   }
 
   async getSilenceRadar(globalTopics: string[]) {
-    // Compare global hot topics with what our network covers
-    const ourTopics = await this.postService.getTopicGravity(7);
-    const ourTopicNames = ourTopics.map((t) => t.topic.toLowerCase());
+    // If no topics provided, load defaults from settings
+    if (!globalTopics || globalTopics.length === 0) {
+      const topicsStr = await this.settingsService.get('silence_radar_topics');
+      globalTopics = topicsStr
+        ? topicsStr.split(',').map((t) => t.trim()).filter(Boolean)
+        : [];
+    }
+    if (globalTopics.length === 0) {
+      return { global_topics: [], covered_topics: [], silence_gaps: [], coverage_rate: 0 };
+    }
 
-    const gaps = globalTopics.filter(
-      (topic) => !ourTopicNames.includes(topic.toLowerCase()),
-    );
+    // Get topics from posts AND keywords (both sources)
+    const [ourTopics, ourKeywords] = await Promise.all([
+      this.postService.getTopicGravity(7),
+      this.postService.getTrendingKeywords(7),
+    ]);
 
-    const covered = globalTopics.filter((topic) =>
-      ourTopicNames.includes(topic.toLowerCase()),
-    );
+    // Combine all network content into a single searchable set
+    const networkTerms = new Set<string>();
+    for (const t of ourTopics) networkTerms.add(t.topic.toLowerCase());
+    for (const k of ourKeywords) networkTerms.add(k.keyword.toLowerCase());
+
+    // Fuzzy match: a global topic is "covered" if any network term contains it or vice versa
+    const covered: string[] = [];
+    const gaps: string[] = [];
+
+    for (const topic of globalTopics) {
+      const topicLower = topic.toLowerCase();
+      const isCovered = [...networkTerms].some(
+        (term) => term.includes(topicLower) || topicLower.includes(term),
+      );
+      if (isCovered) {
+        covered.push(topic);
+      } else {
+        gaps.push(topic);
+      }
+    }
 
     return {
       global_topics: globalTopics,
@@ -189,16 +217,42 @@ export class AnalyticsService {
       this.getAlignmentIndex(),
     ]);
 
-    // Target narrative keywords (configurable)
-    const targetKeywords = ['مقاومت', 'فلسطین', 'غزه', 'حقوق بشر', 'عدالت'];
-    const allKeywords = keywords.map((k) => k.keyword.toLowerCase());
-    const matchCount = targetKeywords.filter((tk) => allKeywords.includes(tk.toLowerCase())).length;
-    const narrativeScore = Math.round((matchCount / targetKeywords.length) * 100);
+    // Target narrative keywords from settings
+    const targetNarrativeStr = await this.settingsService.get('target_narrative');
+    const targetKeywords = targetNarrativeStr
+      ? targetNarrativeStr.split(',').map((k) => k.trim()).filter(Boolean)
+      : ['مقاومت', 'فلسطین', 'غزه', 'حقوق بشر', 'عدالت'];
 
-    // Find deviation keywords
+    // Combine keywords and topics for broader matching
+    const networkTerms = new Set<string>();
+    for (const k of keywords) networkTerms.add(k.keyword.toLowerCase());
+    for (const t of topics) networkTerms.add(t.topic.toLowerCase());
+
+    // Fuzzy match: target keyword is "matched" if any network term contains it or vice versa
+    const matchedTargets: string[] = [];
+    const unmatchedTargets: string[] = [];
+    for (const tk of targetKeywords) {
+      const tkLower = tk.toLowerCase();
+      const isMatched = [...networkTerms].some(
+        (term) => term.includes(tkLower) || tkLower.includes(term),
+      );
+      if (isMatched) {
+        matchedTargets.push(tk);
+      } else {
+        unmatchedTargets.push(tk);
+      }
+    }
+
+    const narrativeScore = targetKeywords.length > 0
+      ? Math.round((matchedTargets.length / targetKeywords.length) * 100)
+      : 0;
+
+    // Find deviation keywords (trending but not in target narrative)
     const deviationKeywords = keywords
-      .filter((k) => !targetKeywords.some((tk) => tk.toLowerCase() === k.keyword.toLowerCase()))
-      .slice(0, 2)
+      .filter((k) => !targetKeywords.some((tk) =>
+        tk.toLowerCase().includes(k.keyword.toLowerCase()) || k.keyword.toLowerCase().includes(tk.toLowerCase()),
+      ))
+      .slice(0, 5)
       .map((k) => k.keyword);
 
     const label = narrativeScore > 70 ? 'انطباق بالا' : narrativeScore > 40 ? 'خنثی' : 'انحراف شدید';
@@ -207,8 +261,11 @@ export class AnalyticsService {
       score: narrativeScore,
       label,
       target_keywords: targetKeywords,
+      matched_keywords: matchedTargets,
+      unmatched_keywords: unmatchedTargets,
       deviation_keywords: deviationKeywords,
       alignment_index: alignment.alignment_index,
+      total_network_terms: networkTerms.size,
     };
   }
 
@@ -260,16 +317,20 @@ export class AnalyticsService {
   }
 
   private async callLLM(prompt: string): Promise<string> {
+    const [apiKey, model] = await Promise.all([
+      this.settingsService.get('openrouter_key'),
+      this.settingsService.get('llm_model'),
+    ]);
     const response = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
       {
-        model: 'google/gemini-2.5-pro',
+        model: model || 'google/gemini-2.5-pro',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.4,
       },
       {
         headers: {
-          'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Authorization': `Bearer ${apiKey || process.env.OPENROUTER_API_KEY}`,
           'Content-Type': 'application/json',
         },
         timeout: 90000,
@@ -323,14 +384,20 @@ export class AnalyticsService {
     const topicsInfo = topics.slice(0, 10).map((t) => `${t.topic}: ${t.count} پست`).join(', ');
     const kwInfo = keywords.slice(0, 10).map((k) => `${k.keyword}: ${k.count}`).join(', ');
 
-    const prompt = `تو یک تحلیل‌گر استراتژیک رسانه‌ای هستی. بر اساس دیتای زیر، ۵ هشدار استراتژیک تولید کن.
+    // Load system prompt and extra instructions from settings
+    const [systemPrompt, extraInstructions] = await Promise.all([
+      this.settingsService.get('prompt_alert_generation'),
+      this.settingsService.get('prompt_alert_generation_extra'),
+    ]);
+
+    const prompt = `${systemPrompt || 'تو یک تحلیل‌گر استراتژیک رسانه‌ای هستی. بر اساس دیتای زیر، ۵ هشدار استراتژیک تولید کن.'}
 
 پیج‌ها:
 ${pagesInfo}
 
 موضوعات داغ: ${topicsInfo}
 کلمات کلیدی: ${kwInfo}
-
+${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : ''}
 خروجی را دقیقاً به فرمت JSON array زیر برگردان (بدون متن اضافه):
 [
   {
@@ -387,7 +454,13 @@ ${pagesInfo}
       ? (sentiment.reduce((s, i) => s + Number(i.avg_sentiment || 0), 0) / sentiment.length).toFixed(2)
       : '0';
 
-    const prompt = `تو یک تحلیل‌گر ارشد رسانه‌ای هستی. بر اساس دیتای زیر، یک گزارش تحلیلی جامع بنویس.
+    // Load system prompt and extra instructions from settings
+    const [systemPrompt, extraInstructions] = await Promise.all([
+      this.settingsService.get('prompt_report_generation'),
+      this.settingsService.get('prompt_report_generation_extra'),
+    ]);
+
+    const prompt = `${systemPrompt || 'تو یک تحلیل‌گر ارشد رسانه‌ای هستی. بر اساس دیتای زیر، یک گزارش تحلیلی جامع بنویس.'}
 
 پیج‌های شبکه:
 ${pagesInfo}
@@ -395,7 +468,7 @@ ${pagesInfo}
 موضوعات داغ: ${topicsInfo}
 کلمات کلیدی: ${kwInfo}
 میانگین احساسات: ${avgSentiment}
-
+${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : ''}
 خروجی را به فرمت JSON زیر برگردان:
 {
   "headline": "تیتر یک شبکه (یک جمله کوتاه و تاثیرگذار)",
