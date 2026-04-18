@@ -2,7 +2,7 @@ import { IsNotEmpty, IsOptional, IsString, IsNumber } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreatePageDto {
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
   name: string;
 
