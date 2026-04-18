@@ -6,7 +6,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors({
-    origin: ['http://localhost:3033', 'http://127.0.0.1:3033'],
+    origin: ['http://localhost:3033', 'http://127.0.0.1:3033', 'https://sm.pish.run'],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });
