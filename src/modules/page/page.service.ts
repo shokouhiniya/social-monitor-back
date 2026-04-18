@@ -93,9 +93,8 @@ export class PageService {
       };
 
       Object.assign(page, updateData);
+      page.last_fetched_at = new Date();
       const saved = await this.pageRepository.save(page);
-
-      // Save posts
       const edges = data.edge_owner_to_timeline_media?.edges || [];
       let savedPostsCount = 0;
       for (const edge of edges) {
@@ -252,6 +251,7 @@ ${postsText || 'پستی ثبت نشده'}
       if (analysis.language) updateData.language = analysis.language;
 
       Object.assign(page, updateData);
+      page.last_processed_at = new Date();
       const saved = await this.pageRepository.save(page);
 
       // Update posts with sentiment analysis
@@ -349,6 +349,60 @@ ${postsText || 'پستی ثبت نشده'}
     ]);
 
     return { total, ghost, high_influence_low_credibility: highInfluenceLowCred };
+  }
+
+  async exportPageData(id: number) {
+    const page = await this.pageRepository.findOne({
+      where: { id },
+      relations: ['posts', 'field_reports'],
+    });
+    if (!page) return { error: 'Page not found' };
+
+    return {
+      page: {
+        id: page.id,
+        name: page.name,
+        username: page.username,
+        platform: page.platform,
+        category: page.category,
+        country: page.country,
+        language: page.language,
+        bio: page.bio,
+        followers_count: page.followers_count,
+        following_count: page.following_count,
+        cluster: page.cluster,
+        credibility_score: page.credibility_score,
+        influence_score: page.influence_score,
+        consistency_rate: page.consistency_rate,
+        persona_radar: page.persona_radar,
+        pain_points: page.pain_points,
+        keywords: page.keywords,
+        is_active: page.is_active,
+        last_fetched_at: page.last_fetched_at,
+        last_processed_at: page.last_processed_at,
+      },
+      posts: (page.posts || []).map((p) => ({
+        id: p.id,
+        caption: p.caption,
+        post_type: p.post_type,
+        likes_count: p.likes_count,
+        comments_count: p.comments_count,
+        shares_count: p.shares_count,
+        sentiment_score: p.sentiment_score,
+        sentiment_label: p.sentiment_label,
+        extracted_topics: p.extracted_topics,
+        extracted_keywords: p.extracted_keywords,
+        published_at: p.published_at,
+      })),
+      field_reports: (page.field_reports || []).map((r) => ({
+        id: r.id,
+        content: r.content,
+        source_type: r.source_type,
+        sentiment: r.sentiment,
+        status: r.status,
+        created_at: r.created_at,
+      })),
+    };
   }
 
   async getRelatedPages(pageId: number, limit = 8) {

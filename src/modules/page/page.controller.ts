@@ -66,6 +66,11 @@ export class PageController {
     return this.pageService.processWithLLM(id);
   }
 
+  @Get(':id/export')
+  async exportPageData(@Param('id') id: number) {
+    return this.pageService.exportPageData(id);
+  }
+
   @Put(':id')
   update(@Param('id') id: number, @Body() dto: UpdatePageDto) {
     return this.pageService.update(id, dto);

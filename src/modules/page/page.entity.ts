@@ -68,6 +68,12 @@ export class Page {
   @Column({ default: true })
   is_active: boolean;
 
+  @Column({ type: 'timestamp', nullable: true })
+  last_fetched_at: Date;
+
+  @Column({ type: 'timestamp', nullable: true })
+  last_processed_at: Date;
+
   @OneToMany(() => Post, (post) => post.page)
   posts: Post[];
 
