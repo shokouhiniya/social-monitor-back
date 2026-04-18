@@ -14,6 +14,8 @@ import { FieldReportModule } from './modules/field-report/field-report.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { ActionPlanModule } from './modules/action-plan/action-plan.module';
 import { StrategicAlertModule } from './modules/strategic-alert/strategic-alert.module';
+import { InteractionModule } from './modules/interaction/interaction.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ResponseInterceptor } from './libs/interceptors/response.interceptor';
 
@@ -30,6 +32,8 @@ import { ResponseInterceptor } from './libs/interceptors/response.interceptor';
     AnalyticsModule,
     ActionPlanModule,
     StrategicAlertModule,
+    InteractionModule,
+    SettingsModule,
   ],
   controllers: [AppController],
   providers: [
