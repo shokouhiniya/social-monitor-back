@@ -1,4 +1,5 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { DataSource } from 'typeorm';
@@ -18,6 +19,7 @@ import { ResponseInterceptor } from './libs/interceptors/response.interceptor';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     AuthModule,
     DatabaseModule,
     ConfigModule,

@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { Cron } from '@nestjs/schedule';
 import axios from 'axios';
 import { PageService } from '../page/page.service';
 import { PostService } from '../post/post.service';
@@ -8,6 +9,11 @@ import { StrategicAlert } from '../strategic-alert/strategic-alert.entity';
 
 @Injectable()
 export class AnalyticsService {
+  private readonly logger = new Logger(AnalyticsService.name);
+  private lastRefreshedAt: Date | null = null;
+  private cachedReport: any = null;
+  private cachedAlerts: any = null;
+
   constructor(
     private readonly pageService: PageService,
     private readonly postService: PostService,
@@ -270,6 +276,38 @@ export class AnalyticsService {
       },
     );
     return response.data?.choices?.[0]?.message?.content || '';
+  }
+
+  // Cron: Run at 00:00, 06:00, 12:00, 18:00 Tehran time (UTC+3:30 → 20:30, 02:30, 08:30, 14:30 UTC)
+  @Cron('30 20,2,8,14 * * *')
+  async handleScheduledRefresh() {
+    this.logger.log('Scheduled refresh triggered');
+    await this.refreshDashboard();
+  }
+
+  async refreshDashboard() {
+    try {
+      const [report, alerts] = await Promise.all([
+        this.generateReportWithLLM(),
+        this.generateAlertsWithLLM(),
+      ]);
+      this.cachedReport = report;
+      this.cachedAlerts = alerts;
+      this.lastRefreshedAt = new Date();
+      this.logger.log(`Dashboard refreshed at ${this.lastRefreshedAt.toISOString()}`);
+      return { status: 'success', refreshed_at: this.lastRefreshedAt.toISOString(), report, alerts };
+    } catch (error) {
+      this.logger.error(`Refresh failed: ${error.message}`);
+      return { status: 'error', message: error.message };
+    }
+  }
+
+  getRefreshStatus() {
+    return {
+      last_refreshed_at: this.lastRefreshedAt?.toISOString() || null,
+      has_cached_report: !!this.cachedReport,
+      has_cached_alerts: !!this.cachedAlerts,
+    };
   }
 
   async generateAlertsWithLLM() {

@@ -94,4 +94,14 @@ export class AnalyticsController {
   generateReport() {
     return this.analyticsService.generateReportWithLLM();
   }
+
+  @Post('refresh')
+  refreshDashboard() {
+    return this.analyticsService.refreshDashboard();
+  }
+
+  @Get('refresh-status')
+  getRefreshStatus() {
+    return this.analyticsService.getRefreshStatus();
+  }
 }
