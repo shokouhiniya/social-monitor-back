@@ -62,8 +62,8 @@ export class PageController {
   }
 
   @Post(':id/process')
-  processPageData(@Param('id') id: number) {
-    return this.pageService.processWithLLM(id);
+  processPageData(@Param('id') id: number, @Body() body: { timeRange?: string }) {
+    return this.pageService.processWithLLM(id, body.timeRange);
   }
 
   @Get(':id/export')

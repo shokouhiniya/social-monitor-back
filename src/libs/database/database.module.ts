@@ -20,6 +20,9 @@ import { ConfigModule } from '../config/config.module'; // relative import
           database: dbConfig.name,
           autoLoadEntities: dbConfig.autoLoadEntities,
           synchronize: dbConfig.synchronize, // Comment on production
+          retryAttempts: 3,
+          retryDelay: 3000,
+          keepConnectionAlive: true,
         };
       },
     }),

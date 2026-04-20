@@ -69,6 +69,41 @@ export class PageService {
     if (!page) throw new HttpException('Page not found', 404);
     if (!page.username) throw new HttpException('Username is required for fetching', 400);
 
+    // Route to appropriate service based on platform
+    if (page.platform === 'twitter') {
+      return this.fetchTwitterData(page);
+    } else if (page.platform === 'telegram') {
+      return this.fetchTelegramData(page);
+    } else if (page.platform === 'instagram') {
+      return this.fetchInstagramData(page);
+    } else {
+      throw new HttpException(`Platform ${page.platform} is not supported for fetching`, 400);
+    }
+  }
+
+  private async fetchTwitterData(page: Page) {
+    try {
+      // Call Twitter monitor endpoint
+      const response = await axios.post(`http://localhost:3000/twitter/monitor/${page.id}`);
+      return response.data;
+    } catch (error) {
+      const message = error?.response?.data?.message || error.message;
+      throw new HttpException(`Failed to fetch Twitter data: ${message}`, 502);
+    }
+  }
+
+  private async fetchTelegramData(page: Page) {
+    try {
+      // Call Telegram monitor endpoint
+      const response = await axios.post(`http://localhost:3000/telegram/monitor/${page.id}`);
+      return response.data;
+    } catch (error) {
+      const message = error?.response?.data?.message || error.message;
+      throw new HttpException(`Failed to fetch Telegram data: ${message}`, 502);
+    }
+  }
+
+  private async fetchInstagramData(page: Page) {
     try {
       const response = await axios.get('https://instagram-looter2.p.rapidapi.com/profile', {
         params: { username: page.username },
@@ -157,23 +192,81 @@ export class PageService {
     }
   }
 
-  async processWithLLM(id: number) {
+  async processWithLLM(id: number, timeRange?: string) {
+    console.log(`🤖 Starting LLM processing for page ID: ${id} with timeRange: ${timeRange || 'all'}`);
+    
     const page = await this.pageRepository.findOne({
       where: { id },
       relations: ['posts'],
     });
     if (!page) throw new HttpException('Page not found', 404);
 
-    // Build context for LLM
-    const recentPosts = (page.posts || [])
+    console.log(`📊 Found page: ${page.name} with ${page.posts?.length || 0} total posts`);
+
+    // Calculate date filter based on time range
+    let dateFilter: Date | undefined = undefined;
+    if (timeRange && timeRange !== 'all') {
+      const hoursMap = {
+        '24h': 24,
+        '3d': 72,
+        '1w': 168,
+        '2w': 336,
+        '1m': 720,
+      };
+      const hours = hoursMap[timeRange] || 168;
+      dateFilter = new Date(Date.now() - hours * 60 * 60 * 1000);
+      console.log(`📅 Filtering posts from ${dateFilter.toISOString()}`);
+    }
+
+    // Filter posts by date if needed
+    let filteredPosts = page.posts || [];
+    if (dateFilter) {
+      filteredPosts = filteredPosts.filter(post => 
+        post.published_at && new Date(post.published_at) >= dateFilter
+      );
+      console.log(`📊 After time filter: ${filteredPosts.length} posts`);
+    }
+
+    // Build context for LLM - use filtered posts
+    const recentPosts = filteredPosts
       .sort((a, b) => new Date(b.published_at || b.created_at).getTime() - new Date(a.published_at || a.created_at).getTime())
-      .slice(0, 10);
+      .slice(0, 50); // Increased from 10 to 50 for better analysis
+
+    console.log(`🔍 Analyzing ${recentPosts.length} posts for LLM`);
+    
+    if (recentPosts.length === 0) {
+      throw new HttpException('No posts found in the selected time range for analysis', 400);
+    }
 
     const postsText = recentPosts.map((p, i) =>
       `پست ${i + 1}: "${(p.caption || '').slice(0, 200)}" (لایک: ${p.likes_count}, کامنت: ${p.comments_count}, لحن: ${p.sentiment_label || 'نامشخص'})`
     ).join('\n');
 
-    const prompt = `تو یک تحلیل‌گر رسانه‌ای هوشمند هستی. اطلاعات زیر مربوط به یک پیج اینستاگرامی است. لطفاً تحلیل کامل ارائه بده.
+    // Adjust prompt based on page category
+    const isOfficial = page.page_category === 'official';
+    const perspectiveText = isOfficial
+      ? 'این پیج متعلق به خود کلاینت است. تحلیل کن که کلاینت چگونه خودش را معرفی می‌کند، چه پیام‌هایی می‌دهد، و چه شخصیتی دارد.'
+      : `این پیج یک منبع خارجی است (${page.page_category}). تحلیل کن که این منبع چگونه به کلاینت (${page.client_keywords?.join(', ') || 'موضوع'}) نگاه می‌کند، چه دیدگاهی دارد، و چگونه او را به تصویر می‌کشد.`;
+
+    const coverageTypeInstruction = isOfficial
+      ? ''
+      : `
+  "coverage_type": "نوع پوشش خبری (quote/criticism/praise/neutral_mention/analysis/interview/report)",`;
+
+    const coverageTypeGuide = isOfficial
+      ? ''
+      : `
+
+راهنمای coverage_type برای منابع غیررسمی:
+- quote: نقل قول مستقیم از کلاینت
+- criticism: انتقاد یا نقد منفی
+- praise: تمجید یا ستایش
+- neutral_mention: ذکر خنثی و بی‌طرفانه
+- analysis: تحلیل و بررسی
+- interview: مصاحبه یا گفتگو
+- report: گزارش خبری`;
+
+    const prompt = `تو یک تحلیل‌گر رسانه‌ای هوشمند هستی. اطلاعات زیر مربوط به یک پیج است. لطفاً تحلیل کامل ارائه بده.
 
 اطلاعات پیج:
 - نام: ${page.name}
@@ -183,7 +276,10 @@ export class PageService {
 - فالوور: ${page.followers_count}
 - فالووینگ: ${page.following_count}
 - دسته‌بندی فعلی: ${page.category || 'نامشخص'}
+- نوع منبع: ${page.page_category || 'official'}
 - کشور: ${page.country || 'نامشخص'}
+
+⚠️ مهم: ${perspectiveText}
 
 آخرین پست‌ها:
 ${postsText || 'پستی ثبت نشده'}
@@ -207,10 +303,12 @@ ${postsText || 'پستی ثبت نشده'}
   "keywords": ["کلمه ۱", "کلمه ۲", "کلمه ۳", "کلمه ۴", "کلمه ۵"],
   "language": "زبان اصلی محتوا",
   "posts_analysis": [
-    {"index": 0, "sentiment_score": عدد -1 تا 1, "sentiment_label": "angry/hopeful/neutral/sad", "topics": ["موضوع۱"], "keywords": ["کلمه۱"]}
+    {"index": 0, "sentiment_score": عدد -1 تا 1, "sentiment_label": "angry/hopeful/neutral/sad",${coverageTypeInstruction} "topics": ["موضوع۱"], "keywords": ["کلمه۱"]}
   ]
-}`;
+}${coverageTypeGuide}`;
 
+    console.log(`🚀 Calling OpenRouter API...`);
+    
     try {
       const response = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
@@ -228,15 +326,21 @@ ${postsText || 'پستی ثبت نشده'}
         },
       );
 
+      console.log(`✅ LLM response received`);
+
       const content = response.data?.choices?.[0]?.message?.content || '';
+      console.log(`📝 LLM content length: ${content.length} characters`);
 
       // Extract JSON from response
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
+        console.error(`❌ No JSON found in LLM response`);
         throw new HttpException('LLM response did not contain valid JSON', 502);
       }
 
+      console.log(`🔍 Parsing JSON...`);
       const analysis = JSON.parse(jsonMatch[0]);
+      console.log(`✅ Analysis parsed successfully`);
 
       // Update page with LLM analysis
       const updateData: any = {};
@@ -250,12 +354,16 @@ ${postsText || 'پستی ثبت نشده'}
       if (analysis.keywords) updateData.keywords = analysis.keywords;
       if (analysis.language) updateData.language = analysis.language;
 
+      console.log(`💾 Saving page updates...`);
       Object.assign(page, updateData);
       page.last_processed_at = new Date();
+      page.last_processed_timeframe = timeRange || 'all';
       const saved = await this.pageRepository.save(page);
+      console.log(`✅ Page saved`);
 
       // Update posts with sentiment analysis
       if (analysis.posts_analysis && Array.isArray(analysis.posts_analysis)) {
+        console.log(`📊 Updating ${analysis.posts_analysis.length} posts with sentiment...`);
         for (const pa of analysis.posts_analysis) {
           const post = recentPosts[pa.index];
           if (post) {
@@ -263,11 +371,16 @@ ${postsText || 'پستی ثبت نشده'}
             post.sentiment_label = pa.sentiment_label;
             post.extracted_topics = pa.topics || [];
             post.extracted_keywords = pa.keywords || [];
+            if (pa.coverage_type) {
+              post.coverage_type = pa.coverage_type;
+            }
             await this.postRepository.save(post);
           }
         }
+        console.log(`✅ Posts updated`);
       }
 
+      console.log(`🎉 LLM processing complete!`);
       return {
         page: saved,
         status: 'processed',
@@ -275,6 +388,8 @@ ${postsText || 'پستی ثبت نشده'}
         analysis,
       };
     } catch (error) {
+      console.error(`❌ LLM processing error:`, error.message);
+      console.error(`❌ Error details:`, error.response?.data || error);
       if (error instanceof HttpException) throw error;
       throw new HttpException(`خطا در پردازش LLM: ${error.message}`, 502);
     }
@@ -288,6 +403,11 @@ ${postsText || 'پستی ثبت نشده'}
 
   async remove(id: number) {
     const page = await this.findById(id);
+    
+    // Delete all posts first (foreign key constraint)
+    await this.postRepository.delete({ page_id: id });
+    
+    // Then delete the page
     return await this.pageRepository.remove(page);
   }
 

@@ -65,6 +65,12 @@ export class Post {
   @Column({ type: 'timestamp', nullable: true })
   published_at: Date;
 
+  @Column({ type: 'boolean', default: true })
+  is_relevant: boolean; // Whether post is relevant to client (based on keyword matching)
+
+  @Column({ nullable: true })
+  coverage_type: string; // How non-official sources cover the client: quote, criticism, praise, neutral_mention, analysis, interview
+
   @CreateDateColumn({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP(6)' })
   created_at: Date;
 }

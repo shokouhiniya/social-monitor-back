@@ -74,6 +74,15 @@ export class Page {
   @Column({ type: 'timestamp', nullable: true })
   last_processed_at: Date;
 
+  @Column({ nullable: true })
+  last_processed_timeframe: string; // e.g., "24h", "1w", "1m", "all"
+
+  @Column({ nullable: true })
+  page_category: string; // official, news_agency, fan_pages, news_pages, local_sources, opposition_sources, foreign_sources
+
+  @Column({ type: 'text', array: true, nullable: true })
+  client_keywords: string[]; // Keywords to filter relevant posts (e.g., ["قالیباف"])
+
   @OneToMany(() => Post, (post) => post.page)
   posts: Post[];
 

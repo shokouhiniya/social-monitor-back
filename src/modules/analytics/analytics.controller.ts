@@ -21,8 +21,11 @@ export class AnalyticsController {
   }
 
   @Get('profile/:pageId')
-  getProfileDeepDive(@Param('pageId') pageId: number) {
-    return this.analyticsService.getProfileDeepDive(pageId);
+  getProfileDeepDive(
+    @Param('pageId') pageId: number,
+    @Query('timeRange') timeRange?: string,
+  ) {
+    return this.analyticsService.getProfileDeepDive(pageId, timeRange);
   }
 
   @Get('reaction-velocity')
