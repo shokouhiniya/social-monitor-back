@@ -23,6 +23,9 @@ export class Post {
   @Column({ nullable: true })
   external_id: string; // ID from the source platform
 
+  @Column({ nullable: true })
+  shortcode: string; // Instagram shortcode for URL (e.g., CXxxx)
+
   @Column({ type: 'text', nullable: true })
   caption: string;
 

@@ -118,6 +118,7 @@ export class PageService {
         const post = this.postRepository.create({
           page_id: page.id,
           external_id: externalId,
+          shortcode: node.shortcode || externalId,
           caption,
           post_type: postType,
           media_url: mediaUrl,
