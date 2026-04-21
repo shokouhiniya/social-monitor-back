@@ -75,7 +75,7 @@ export class PageService {
       const response = await axios.get('https://instagram-looter2.p.rapidapi.com/profile', {
         params: { username: page.username },
         headers: {
-          'x-rapidapi-key': process.env.RAPIDAPI_KEY || 'b79509e210msh113fb4eced81297p155bcajsn897485f63480',
+          'x-rapidapi-key': process.env.RAPIDAPI_KEY,
           'x-rapidapi-host': 'instagram-looter2.p.rapidapi.com',
         },
         timeout: 20000,

@@ -19,7 +19,7 @@ export const TWITTER_PROVIDERS: TwitterProvider[] = [
   // Provider 1: Twitter241 (Primary)
   {
     name: 'Twitter241',
-    apiKey: process.env.TWITTER_API_KEY_1 || '76427d58b0msha0507832ac9c4edp17b03bjsnd2483950ce47',
+    apiKey: process.env.TWITTER_API_KEY_1 || '',
     apiHost: process.env.TWITTER_API_HOST_1 || 'twitter241.p.rapidapi.com',
     enabled: true,
     priority: 1,
@@ -34,7 +34,7 @@ export const TWITTER_PROVIDERS: TwitterProvider[] = [
   // Provider 2: The Old Bird (twitter154)
   {
     name: 'TheOldBird',
-    apiKey: process.env.TWITTER_API_KEY_2 || '76427d58b0msha0507832ac9c4edp17b03bjsnd2483950ce47',
+    apiKey: process.env.TWITTER_API_KEY_2 || '',
     apiHost: process.env.TWITTER_API_HOST_2 || 'twitter154.p.rapidapi.com',
     enabled: true,
     priority: 2,
@@ -49,7 +49,7 @@ export const TWITTER_PROVIDERS: TwitterProvider[] = [
   // Provider 3: Twitter API45
   {
     name: 'TwitterAPI45',
-    apiKey: process.env.TWITTER_API_KEY_3 || '76427d58b0msha0507832ac9c4edp17b03bjsnd2483950ce47',
+    apiKey: process.env.TWITTER_API_KEY_3 || '',
     apiHost: process.env.TWITTER_API_HOST_3 || 'twitter-api45.p.rapidapi.com',
     enabled: true,
     priority: 3,
