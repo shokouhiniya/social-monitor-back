@@ -68,6 +68,12 @@ export class Page {
   @Column({ default: true })
   is_active: boolean;
 
+  @Column({ nullable: true })
+  page_category: string; // official, news_agency, fan_pages, etc.
+
+  @Column({ type: 'jsonb', nullable: true })
+  client_keywords: string[]; // keywords for filtering relevant posts
+
   @Column({ type: 'timestamp', nullable: true })
   last_fetched_at: Date;
 

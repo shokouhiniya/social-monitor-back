@@ -62,6 +62,9 @@ export class Post {
   @Column({ type: 'boolean', default: false })
   is_reshare: boolean;
 
+  @Column({ type: 'boolean', default: true })
+  is_relevant: boolean; // For filtered channels (keyword-based)
+
   @Column({ nullable: true })
   original_source: string; // if reshared, from which page
 

@@ -16,6 +16,8 @@ import { ActionPlanModule } from './modules/action-plan/action-plan.module';
 import { StrategicAlertModule } from './modules/strategic-alert/strategic-alert.module';
 import { InteractionModule } from './modules/interaction/interaction.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { TelegramModule } from './modules/telegram/telegram.module';
+import { TwitterModule } from './modules/twitter/twitter.module';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ResponseInterceptor } from './libs/interceptors/response.interceptor';
 
@@ -34,6 +36,8 @@ import { ResponseInterceptor } from './libs/interceptors/response.interceptor';
     StrategicAlertModule,
     InteractionModule,
     SettingsModule,
+    TelegramModule,
+    TwitterModule,
   ],
   controllers: [AppController],
   providers: [
