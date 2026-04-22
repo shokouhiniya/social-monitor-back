@@ -8,7 +8,6 @@ import { Page } from './page.entity';
 import { Post } from '../post/post.entity';
 import { FieldReport } from '../field-report/field-report.entity';
 import { ActionPlan } from '../action-plan/action-plan.entity';
-import { Interaction } from '../interaction/interaction.entity';
 import { CreatePageDto, UpdatePageDto, PageQueryDto } from './page.dto';
 
 @Injectable()
@@ -22,9 +21,6 @@ export class PageService {
     private fieldReportRepository: Repository<FieldReport>,
     @InjectRepository(ActionPlan)
     private actionPlanRepository: Repository<ActionPlan>,
-    @InjectRepository(Interaction)
-    private interactionRepository: Repository<Interaction>,
-    private readonly settingsService: SettingsService,
   ) {}
 
   /**
@@ -40,16 +36,21 @@ export class PageService {
 
       const response = await axios.get(url, {
         responseType: 'arraybuffer',
-        timeout: 15000,
+        timeout: 30000,
+        maxContentLength: 50 * 1024 * 1024, // 50MB max for videos
       });
 
       const contentType = response.headers['content-type'] || 'image/jpeg';
-      const ext = contentType.includes('png') ? '.png' : contentType.includes('webp') ? '.webp' : '.jpg';
+      let ext = '.jpg';
+      if (contentType.includes('png')) ext = '.png';
+      else if (contentType.includes('webp')) ext = '.webp';
+      else if (contentType.includes('mp4') || contentType.includes('video')) ext = '.mp4';
+
       const filename = `${postId}${ext}`;
       const filePath = path.join(mediaDir, filename);
 
       fs.writeFileSync(filePath, Buffer.from(response.data));
-      console.log(`📸 Saved media: ${filename} for page ${pageId}`);
+      console.log(`📸 Saved media: ${filename} for page ${pageId} (${(response.data.byteLength / 1024).toFixed(0)}KB)`);
 
       return `/static/media/${pageId}/${filename}`;
     } catch (err) {
@@ -168,7 +169,6 @@ export class PageService {
         const post = this.postRepository.create({
           page_id: page.id,
           external_id: externalId,
-          shortcode: node.shortcode || externalId,
           caption,
           post_type: postType,
           media_url: mediaUrl,
@@ -180,11 +180,85 @@ export class PageService {
         savedPostsCount++;
       }
 
+      // Fetch stories using instagram-scraper2 API
+      let savedStoriesCount = 0;
+      try {
+        console.log(`📖 Fetching stories for @${page.username}...`);
+        const storiesResponse = await axios.get('https://instagram-scraper2.p.rapidapi.com/stories', {
+          params: { username: page.username },
+          headers: {
+            'x-rapidapi-key': process.env.RAPIDAPI_KEY,
+            'x-rapidapi-host': 'instagram-scraper2.p.rapidapi.com',
+          },
+          timeout: 20000,
+        });
+
+        const storiesData = storiesResponse.data;
+        // The API returns story items - could be array or object with items
+        const storyItems = Array.isArray(storiesData)
+          ? storiesData
+          : storiesData?.items || storiesData?.stories || Object.values(storiesData).flat().filter(Boolean);
+
+        if (storyItems && storyItems.length > 0) {
+          console.log(`📖 Found ${storyItems.length} active stories`);
+
+          for (const story of storyItems) {
+            const storyId = story.id || story.pk || `story_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+            const externalId = `story_${storyId}`;
+
+            // Skip if already saved
+            const existing = await this.postRepository.findOne({
+              where: { external_id: externalId, page_id: page.id },
+            });
+            if (existing) continue;
+
+            // Get media URL - stories can be images or videos
+            const isVideo = story.is_video || story.video_versions || story.media_type === 2;
+            const imageUrl = story.display_url || story.image_versions2?.candidates?.[0]?.url || story.thumbnail_src || null;
+            const videoUrl = isVideo ? (story.video_url || story.video_versions?.[0]?.url || null) : null;
+            const caption = story.caption?.text || story.caption || '';
+            const publishedAt = story.taken_at_timestamp
+              ? new Date(story.taken_at_timestamp * 1000)
+              : story.taken_at
+                ? new Date(story.taken_at * 1000)
+                : new Date();
+
+            // Download media locally (stories expire!)
+            let localMediaUrl: string | null = null;
+            const mediaToDownload = videoUrl || imageUrl;
+            if (mediaToDownload) {
+              localMediaUrl = await this.downloadMedia(mediaToDownload, page.id, externalId);
+            }
+
+            const storyPost = this.postRepository.create({
+              page_id: page.id,
+              external_id: externalId,
+              caption,
+              post_type: 'story',
+              media_url: localMediaUrl || mediaToDownload,
+              likes_count: 0,
+              comments_count: 0,
+              views_count: story.viewer_count || 0,
+              published_at: publishedAt,
+            });
+            await this.postRepository.save(storyPost);
+            savedStoriesCount++;
+            console.log(`  📖 Saved story ${externalId} (${isVideo ? 'video' : 'image'})`);
+          }
+        } else {
+          console.log(`📖 No active stories for @${page.username}`);
+        }
+      } catch (storyErr) {
+        // Don't fail the whole fetch if stories fail
+        console.warn(`⚠️ Could not fetch stories: ${storyErr.message}`);
+      }
+
       return {
         page: saved,
         status: 'fetched',
-        message: `دیتای پروفایل و ${savedPostsCount} پست با موفقیت واکشی شد`,
+        message: `دیتای پروفایل و ${savedPostsCount} پست و ${savedStoriesCount} استوری با موفقیت واکشی شد`,
         posts_fetched: savedPostsCount,
+        stories_fetched: savedStoriesCount,
         raw: {
           is_verified: data.is_verified,
           is_private: data.is_private,
@@ -210,7 +284,7 @@ export class PageService {
     }
   }
 
-  async processWithLLM(id: number) {
+  async processWithLLM(id: number, timeRange?: string) {
     const page = await this.pageRepository.findOne({
       where: { id },
       relations: ['posts'],
@@ -239,13 +313,11 @@ export class PageService {
       `پست ${i} (id=${p.id}): "${(p.caption || '(بدون متن)').slice(0, 200)}" (لایک: ${p.likes_count}, کامنت: ${p.comments_count}, لحن: ${p.sentiment_label || 'نامشخص'})`
     ).join('\n');
 
-    // Load system prompt, extra instructions, model and API key from settings
-    const [systemPrompt, extraInstructions, apiKey, model] = await Promise.all([
-      this.settingsService.get('prompt_page_analysis'),
-      this.settingsService.get('prompt_page_analysis_extra'),
-      this.settingsService.get('openrouter_key'),
-      this.settingsService.get('llm_model'),
-    ]);
+    // Load settings from env
+    const systemPrompt = '';
+    const extraInstructions = '';
+    const apiKey = process.env.OPENROUTER_API_KEY || '';
+    const model = 'google/gemini-2.5-pro';
 
     const prompt = `${systemPrompt || 'تو یک تحلیل‌گر رسانه‌ای هوشمند هستی. اطلاعات زیر مربوط به یک پیج اینستاگرامی است. لطفاً تحلیل کامل ارائه بده.'}
 
@@ -380,7 +452,6 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
     const page = await this.findById(id);
 
     // Delete all related records (foreign key constraints)
-    await this.interactionRepository.delete({ page_id: id });
     await this.actionPlanRepository.delete({ page_id: id });
     await this.fieldReportRepository.delete({ page_id: id });
     await this.postRepository.delete({ page_id: id });
