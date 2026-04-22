@@ -2,9 +2,15 @@ import { HttpException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like } from 'typeorm';
 import axios from 'axios';
+import * as fs from 'fs';
+import * as path from 'path';
 import { Page } from './page.entity';
 import { Post } from '../post/post.entity';
+import { FieldReport } from '../field-report/field-report.entity';
+import { ActionPlan } from '../action-plan/action-plan.entity';
+import { Interaction } from '../interaction/interaction.entity';
 import { CreatePageDto, UpdatePageDto, PageQueryDto } from './page.dto';
+import { SettingsService } from '../settings/settings.service';
 
 @Injectable()
 export class PageService {
@@ -13,7 +19,45 @@ export class PageService {
     private pageRepository: Repository<Page>,
     @InjectRepository(Post)
     private postRepository: Repository<Post>,
+    @InjectRepository(FieldReport)
+    private fieldReportRepository: Repository<FieldReport>,
+    @InjectRepository(ActionPlan)
+    private actionPlanRepository: Repository<ActionPlan>,
+    @InjectRepository(Interaction)
+    private interactionRepository: Repository<Interaction>,
+    private readonly settingsService: SettingsService,
   ) {}
+
+  /**
+   * Download an image from a URL and save it locally.
+   * Returns the local static URL path, or null on failure.
+   */
+  private async downloadMedia(url: string, pageId: number, postId: string): Promise<string | null> {
+    try {
+      const mediaDir = path.join(process.cwd(), 'public', 'media', String(pageId));
+      if (!fs.existsSync(mediaDir)) {
+        fs.mkdirSync(mediaDir, { recursive: true });
+      }
+
+      const response = await axios.get(url, {
+        responseType: 'arraybuffer',
+        timeout: 15000,
+      });
+
+      const contentType = response.headers['content-type'] || 'image/jpeg';
+      const ext = contentType.includes('png') ? '.png' : contentType.includes('webp') ? '.webp' : '.jpg';
+      const filename = `${postId}${ext}`;
+      const filePath = path.join(mediaDir, filename);
+
+      fs.writeFileSync(filePath, Buffer.from(response.data));
+      console.log(`📸 Saved media: ${filename} for page ${pageId}`);
+
+      return `/static/media/${pageId}/${filename}`;
+    } catch (err) {
+      console.warn(`⚠️ Failed to download media for post ${postId}:`, err.message);
+      return null;
+    }
+  }
 
   async findAll(query: PageQueryDto) {
     const { category, platform, cluster, country, search, page = 1, limit = 20 } = query;
@@ -69,46 +113,11 @@ export class PageService {
     if (!page) throw new HttpException('Page not found', 404);
     if (!page.username) throw new HttpException('Username is required for fetching', 400);
 
-    // Route to appropriate service based on platform
-    if (page.platform === 'twitter') {
-      return this.fetchTwitterData(page);
-    } else if (page.platform === 'telegram') {
-      return this.fetchTelegramData(page);
-    } else if (page.platform === 'instagram') {
-      return this.fetchInstagramData(page);
-    } else {
-      throw new HttpException(`Platform ${page.platform} is not supported for fetching`, 400);
-    }
-  }
-
-  private async fetchTwitterData(page: Page) {
-    try {
-      // Call Twitter monitor endpoint
-      const response = await axios.post(`http://localhost:3000/twitter/monitor/${page.id}`);
-      return response.data;
-    } catch (error) {
-      const message = error?.response?.data?.message || error.message;
-      throw new HttpException(`Failed to fetch Twitter data: ${message}`, 502);
-    }
-  }
-
-  private async fetchTelegramData(page: Page) {
-    try {
-      // Call Telegram monitor endpoint
-      const response = await axios.post(`http://localhost:3000/telegram/monitor/${page.id}`);
-      return response.data;
-    } catch (error) {
-      const message = error?.response?.data?.message || error.message;
-      throw new HttpException(`Failed to fetch Telegram data: ${message}`, 502);
-    }
-  }
-
-  private async fetchInstagramData(page: Page) {
     try {
       const response = await axios.get('https://instagram-looter2.p.rapidapi.com/profile', {
         params: { username: page.username },
         headers: {
-          'x-rapidapi-key': process.env.RAPIDAPI_KEY || 'b79509e210msh113fb4eced81297p155bcajsn897485f63480',
+          'x-rapidapi-key': process.env.RAPIDAPI_KEY,
           'x-rapidapi-host': 'instagram-looter2.p.rapidapi.com',
         },
         timeout: 20000,
@@ -146,11 +155,21 @@ export class PageService {
         const commentsCount = node.edge_media_to_comment?.count || 0;
         const postType = node.is_video ? (node.product_type === 'clips' ? 'reel' : 'video') : (node.__typename === 'GraphSidecar' ? 'carousel' : 'image');
         const publishedAt = node.taken_at_timestamp ? new Date(node.taken_at_timestamp * 1000) : undefined;
-        const mediaUrl = node.display_url || node.thumbnail_src || undefined;
+        const originalMediaUrl = node.display_url || node.thumbnail_src || undefined;
+
+        // Download image locally so it doesn't expire
+        let mediaUrl = originalMediaUrl;
+        if (originalMediaUrl) {
+          const localPath = await this.downloadMedia(originalMediaUrl, page.id, externalId);
+          if (localPath) {
+            mediaUrl = localPath;
+          }
+        }
 
         const post = this.postRepository.create({
           page_id: page.id,
           external_id: externalId,
+          shortcode: node.shortcode || externalId,
           caption,
           post_type: postType,
           media_url: mediaUrl,
@@ -192,81 +211,44 @@ export class PageService {
     }
   }
 
-  async processWithLLM(id: number, timeRange?: string) {
-    console.log(`🤖 Starting LLM processing for page ID: ${id} with timeRange: ${timeRange || 'all'}`);
-    
+  async processWithLLM(id: number) {
     const page = await this.pageRepository.findOne({
       where: { id },
       relations: ['posts'],
     });
     if (!page) throw new HttpException('Page not found', 404);
 
-    console.log(`📊 Found page: ${page.name} with ${page.posts?.length || 0} total posts`);
+    // Only send unprocessed posts to save tokens
+    // A post is considered processed if it has a sentiment_label AND (caption_fa OR caption is Farsi/empty)
+    const allPosts = (page.posts || [])
+      .sort((a, b) => new Date(b.published_at || b.created_at).getTime() - new Date(a.published_at || a.created_at).getTime());
 
-    // Calculate date filter based on time range
-    let dateFilter: Date | undefined = undefined;
-    if (timeRange && timeRange !== 'all') {
-      const hoursMap = {
-        '24h': 24,
-        '3d': 72,
-        '1w': 168,
-        '2w': 336,
-        '1m': 720,
-      };
-      const hours = hoursMap[timeRange] || 168;
-      dateFilter = new Date(Date.now() - hours * 60 * 60 * 1000);
-      console.log(`📅 Filtering posts from ${dateFilter.toISOString()}`);
-    }
+    const unprocessedPosts = allPosts.filter(p => !p.sentiment_label);
+    const recentPosts = unprocessedPosts.length > 0 ? unprocessedPosts.slice(0, 50) : allPosts.slice(0, 10);
 
-    // Filter posts by date if needed
-    let filteredPosts = page.posts || [];
-    if (dateFilter) {
-      filteredPosts = filteredPosts.filter(post => 
-        post.published_at && new Date(post.published_at) >= dateFilter
-      );
-      console.log(`📊 After time filter: ${filteredPosts.length} posts`);
-    }
+    console.log(`🤖 Processing page ${page.name}: ${allPosts.length} total posts, ${unprocessedPosts.length} unprocessed, sending ${recentPosts.length} to AI`);
 
-    // Build context for LLM - use filtered posts
-    const recentPosts = filteredPosts
-      .sort((a, b) => new Date(b.published_at || b.created_at).getTime() - new Date(a.published_at || a.created_at).getTime())
-      .slice(0, 50); // Increased from 10 to 50 for better analysis
-
-    console.log(`🔍 Analyzing ${recentPosts.length} posts for LLM`);
-    
     if (recentPosts.length === 0) {
-      throw new HttpException('No posts found in the selected time range for analysis', 400);
+      return {
+        page,
+        status: 'skipped',
+        message: 'همه پست‌ها قبلاً پردازش شده‌اند',
+      };
     }
 
     const postsText = recentPosts.map((p, i) =>
-      `پست ${i + 1}: "${(p.caption || '').slice(0, 200)}" (لایک: ${p.likes_count}, کامنت: ${p.comments_count}, لحن: ${p.sentiment_label || 'نامشخص'})`
+      `پست ${i} (id=${p.id}): "${(p.caption || '(بدون متن)').slice(0, 200)}" (لایک: ${p.likes_count}, کامنت: ${p.comments_count}, لحن: ${p.sentiment_label || 'نامشخص'})`
     ).join('\n');
 
-    // Adjust prompt based on page category
-    const isOfficial = page.page_category === 'official';
-    const perspectiveText = isOfficial
-      ? 'این پیج متعلق به خود کلاینت است. تحلیل کن که کلاینت چگونه خودش را معرفی می‌کند، چه پیام‌هایی می‌دهد، و چه شخصیتی دارد.'
-      : `این پیج یک منبع خارجی است (${page.page_category}). تحلیل کن که این منبع چگونه به کلاینت (${page.client_keywords?.join(', ') || 'موضوع'}) نگاه می‌کند، چه دیدگاهی دارد، و چگونه او را به تصویر می‌کشد.`;
+    // Load system prompt, extra instructions, model and API key from settings
+    const [systemPrompt, extraInstructions, apiKey, model] = await Promise.all([
+      this.settingsService.get('prompt_page_analysis'),
+      this.settingsService.get('prompt_page_analysis_extra'),
+      this.settingsService.get('openrouter_key'),
+      this.settingsService.get('llm_model'),
+    ]);
 
-    const coverageTypeInstruction = isOfficial
-      ? ''
-      : `
-  "coverage_type": "نوع پوشش خبری (quote/criticism/praise/neutral_mention/analysis/interview/report)",`;
-
-    const coverageTypeGuide = isOfficial
-      ? ''
-      : `
-
-راهنمای coverage_type برای منابع غیررسمی:
-- quote: نقل قول مستقیم از کلاینت
-- criticism: انتقاد یا نقد منفی
-- praise: تمجید یا ستایش
-- neutral_mention: ذکر خنثی و بی‌طرفانه
-- analysis: تحلیل و بررسی
-- interview: مصاحبه یا گفتگو
-- report: گزارش خبری`;
-
-    const prompt = `تو یک تحلیل‌گر رسانه‌ای هوشمند هستی. اطلاعات زیر مربوط به یک پیج است. لطفاً تحلیل کامل ارائه بده.
+    const prompt = `${systemPrompt || 'تو یک تحلیل‌گر رسانه‌ای هوشمند هستی. اطلاعات زیر مربوط به یک پیج اینستاگرامی است. لطفاً تحلیل کامل ارائه بده.'}
 
 اطلاعات پیج:
 - نام: ${page.name}
@@ -276,13 +258,13 @@ export class PageService {
 - فالوور: ${page.followers_count}
 - فالووینگ: ${page.following_count}
 - دسته‌بندی فعلی: ${page.category || 'نامشخص'}
-- نوع منبع: ${page.page_category || 'official'}
 - کشور: ${page.country || 'نامشخص'}
-
-⚠️ مهم: ${perspectiveText}
 
 آخرین پست‌ها:
 ${postsText || 'پستی ثبت نشده'}
+${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : ''}
+
+⚠️ مهم - ترجمه فارسی: اگر متن پستی به زبانی غیر از فارسی نوشته شده (مثلاً عربی، انگلیسی، عبری و غیره)، حتماً ترجمه فارسی آن را در فیلد "caption_fa" قرار بده. اگر پست به فارسی است، فیلد caption_fa را null بگذار.
 
 لطفاً خروجی را دقیقاً به فرمت JSON زیر برگردان (بدون هیچ متن اضافه):
 {
@@ -303,44 +285,36 @@ ${postsText || 'پستی ثبت نشده'}
   "keywords": ["کلمه ۱", "کلمه ۲", "کلمه ۳", "کلمه ۴", "کلمه ۵"],
   "language": "زبان اصلی محتوا",
   "posts_analysis": [
-    {"index": 0, "sentiment_score": عدد -1 تا 1, "sentiment_label": "angry/hopeful/neutral/sad",${coverageTypeInstruction} "topics": ["موضوع۱"], "keywords": ["کلمه۱"]}
+    {"post_id": عدد id پست, "sentiment_score": عدد -1 تا 1, "sentiment_label": "angry/hopeful/neutral/sad", "caption_fa": "ترجمه فارسی (فقط برای پست‌های غیرفارسی، در غیر این صورت null)", "topics": ["موضوع۱"], "keywords": ["کلمه۱"]}
   ]
-}${coverageTypeGuide}`;
+}`;
 
-    console.log(`🚀 Calling OpenRouter API...`);
-    
     try {
       const response = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
-          model: 'google/gemini-2.5-pro',
+          model: model || 'google/gemini-2.5-pro',
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.3,
         },
         {
           headers: {
-            'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            'Authorization': `Bearer ${apiKey || process.env.OPENROUTER_API_KEY}`,
             'Content-Type': 'application/json',
           },
           timeout: 60000,
         },
       );
 
-      console.log(`✅ LLM response received`);
-
       const content = response.data?.choices?.[0]?.message?.content || '';
-      console.log(`📝 LLM content length: ${content.length} characters`);
 
       // Extract JSON from response
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
-        console.error(`❌ No JSON found in LLM response`);
         throw new HttpException('LLM response did not contain valid JSON', 502);
       }
 
-      console.log(`🔍 Parsing JSON...`);
       const analysis = JSON.parse(jsonMatch[0]);
-      console.log(`✅ Analysis parsed successfully`);
 
       // Update page with LLM analysis
       const updateData: any = {};
@@ -354,33 +328,37 @@ ${postsText || 'پستی ثبت نشده'}
       if (analysis.keywords) updateData.keywords = analysis.keywords;
       if (analysis.language) updateData.language = analysis.language;
 
-      console.log(`💾 Saving page updates...`);
       Object.assign(page, updateData);
       page.last_processed_at = new Date();
-      page.last_processed_timeframe = timeRange || 'all';
       const saved = await this.pageRepository.save(page);
-      console.log(`✅ Page saved`);
 
       // Update posts with sentiment analysis
       if (analysis.posts_analysis && Array.isArray(analysis.posts_analysis)) {
-        console.log(`📊 Updating ${analysis.posts_analysis.length} posts with sentiment...`);
+        // Build a map of post ID -> post for quick lookup
+        const postMap = new Map(recentPosts.map(p => [p.id, p]));
+
         for (const pa of analysis.posts_analysis) {
-          const post = recentPosts[pa.index];
+          // Support both post_id (new) and index (legacy) formats
+          let post: Post | undefined;
+          if (pa.post_id) {
+            post = postMap.get(pa.post_id);
+          } else if (pa.index !== undefined) {
+            post = recentPosts[pa.index];
+          }
+
           if (post) {
             post.sentiment_score = pa.sentiment_score;
             post.sentiment_label = pa.sentiment_label;
             post.extracted_topics = pa.topics || [];
             post.extracted_keywords = pa.keywords || [];
-            if (pa.coverage_type) {
-              post.coverage_type = pa.coverage_type;
+            if (pa.caption_fa) {
+              post.caption_fa = pa.caption_fa;
             }
             await this.postRepository.save(post);
           }
         }
-        console.log(`✅ Posts updated`);
       }
 
-      console.log(`🎉 LLM processing complete!`);
       return {
         page: saved,
         status: 'processed',
@@ -388,8 +366,6 @@ ${postsText || 'پستی ثبت نشده'}
         analysis,
       };
     } catch (error) {
-      console.error(`❌ LLM processing error:`, error.message);
-      console.error(`❌ Error details:`, error.response?.data || error);
       if (error instanceof HttpException) throw error;
       throw new HttpException(`خطا در پردازش LLM: ${error.message}`, 502);
     }
@@ -403,10 +379,13 @@ ${postsText || 'پستی ثبت نشده'}
 
   async remove(id: number) {
     const page = await this.findById(id);
-    
-    // Delete all posts first (foreign key constraint)
+
+    // Delete all related records (foreign key constraints)
+    await this.interactionRepository.delete({ page_id: id });
+    await this.actionPlanRepository.delete({ page_id: id });
+    await this.fieldReportRepository.delete({ page_id: id });
     await this.postRepository.delete({ page_id: id });
-    
+
     // Then delete the page
     return await this.pageRepository.remove(page);
   }
