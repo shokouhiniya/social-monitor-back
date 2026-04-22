@@ -1,5 +1,4 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
-import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { DataSource } from 'typeorm';
@@ -14,16 +13,13 @@ import { FieldReportModule } from './modules/field-report/field-report.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { ActionPlanModule } from './modules/action-plan/action-plan.module';
 import { StrategicAlertModule } from './modules/strategic-alert/strategic-alert.module';
-import { InteractionModule } from './modules/interaction/interaction.module';
-import { SettingsModule } from './modules/settings/settings.module';
-import { TelegramModule } from './modules/telegram/telegram.module';
 import { TwitterModule } from './modules/twitter/twitter.module';
+import { TelegramModule } from './modules/telegram/telegram.module';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ResponseInterceptor } from './libs/interceptors/response.interceptor';
 
 @Module({
   imports: [
-    ScheduleModule.forRoot(),
     AuthModule,
     DatabaseModule,
     ConfigModule,
@@ -34,10 +30,8 @@ import { ResponseInterceptor } from './libs/interceptors/response.interceptor';
     AnalyticsModule,
     ActionPlanModule,
     StrategicAlertModule,
-    InteractionModule,
-    SettingsModule,
-    TelegramModule,
     TwitterModule,
+    TelegramModule,
   ],
   controllers: [AppController],
   providers: [

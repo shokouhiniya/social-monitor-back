@@ -107,12 +107,71 @@ export class AnalyticsService {
     };
   }
 
-  async getProfileDeepDive(pageId: number) {
-    const [page, sentimentTimeline, contentHooks] = await Promise.all([
-      this.pageService.findById(pageId),
-      this.postService.getSentimentTimeline(pageId, 30),
-      this.postService.getContentHookAnalysis(pageId),
+  async getProfileDeepDive(pageId: number, timeRange?: string) {
+    // Calculate date filter based on time range
+    let dateFilter: Date | undefined = undefined;
+    let hoursNeeded = 168; // Default to 1 week
+    
+    if (timeRange && timeRange !== 'all') {
+      const hoursMap = {
+        '24h': 24,
+        '3d': 72,
+        '1w': 168,
+        '2w': 336,
+        '1m': 720,
+      };
+      hoursNeeded = hoursMap[timeRange] || 168;
+      dateFilter = new Date(Date.now() - hoursNeeded * 60 * 60 * 1000);
+    }
+
+    // Get page with posts
+    const page = await this.pageService.findById(pageId);
+    
+    // Check if we have posts covering the requested timeframe
+    if (dateFilter && page && page.posts && page.posts.length > 0) {
+      const oldestPost = page.posts.reduce((oldest, post) => {
+        const postDate = new Date(post.published_at || post.created_at);
+        const oldestDate = new Date(oldest.published_at || oldest.created_at);
+        return postDate < oldestDate ? post : oldest;
+      });
+      
+      const oldestPostDate = new Date(oldestPost.published_at || oldestPost.created_at);
+      const needsMorePosts = oldestPostDate > dateFilter;
+      
+      console.log(`📊 Time range check: Need posts from ${dateFilter.toISOString()}, oldest post is ${oldestPostDate.toISOString()}, needs more: ${needsMorePosts}`);
+      
+      // If we don't have posts old enough, try to fetch more
+      if (needsMorePosts && (page.platform === 'twitter' || page.platform === 'telegram')) {
+        console.log(`📥 Fetching more posts to cover the requested timeframe...`);
+        try {
+          if (page.platform === 'twitter') {
+            await axios.post(`http://localhost:3000/twitter/fetch-more/${pageId}`, { count: 100 });
+          } else if (page.platform === 'telegram') {
+            await axios.post(`http://localhost:3000/telegram/fetch-more/${pageId}`, { messageLimit: 100 });
+          }
+          
+          // Reload page with new posts
+          const updatedPage = await this.pageService.findById(pageId);
+          Object.assign(page, updatedPage);
+          console.log(`✅ Fetched more posts, now have ${page.posts?.length || 0} total posts`);
+        } catch (error) {
+          console.warn(`⚠️  Could not fetch more posts: ${error.message}`);
+          // Continue with existing posts
+        }
+      }
+    }
+
+    const [sentimentTimeline, contentHooks] = await Promise.all([
+      this.postService.getSentimentTimeline(pageId, 30, dateFilter),
+      this.postService.getContentHookAnalysis(pageId, dateFilter),
     ]);
+
+    // Filter posts by date if needed
+    if (page && page.posts && dateFilter) {
+      page.posts = page.posts.filter(post => 
+        post.published_at && new Date(post.published_at) >= dateFilter
+      );
+    }
 
     return {
       page,
@@ -124,6 +183,8 @@ export class AnalyticsService {
       sentiment_timeline: sentimentTimeline,
       keywords: page.keywords,
       content_hooks: contentHooks,
+      time_range: timeRange || 'all',
+      posts_count: page.posts?.length || 0,
     };
   }
 

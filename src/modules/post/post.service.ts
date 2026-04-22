@@ -82,9 +82,12 @@ export class PostService {
       .map(([keyword, count]) => ({ keyword, count }));
   }
 
-  async getSentimentTimeline(pageId?: number, days = 30) {
-    const since = new Date();
-    since.setDate(since.getDate() - days);
+  async getSentimentTimeline(pageId?: number, days = 30, dateFilter?: Date) {
+    const since = dateFilter || (() => {
+      const date = new Date();
+      date.setDate(date.getDate() - days);
+      return date;
+    })();
 
     const qb = this.postRepository
       .createQueryBuilder('post')
@@ -147,14 +150,20 @@ export class PostService {
       .getRawMany();
   }
 
-  async getContentHookAnalysis(pageId: number) {
+  async getContentHookAnalysis(pageId: number, dateFilter?: Date) {
     // Analyze which content formats get the most engagement for a specific page
-    const posts = await this.postRepository
+    const qb = this.postRepository
       .createQueryBuilder('post')
       .select('post.post_type', 'format')
       .addSelect('AVG(post.likes_count + post.comments_count + post.shares_count)', 'avg_engagement')
       .addSelect('COUNT(*)', 'post_count')
-      .where('post.page_id = :pageId', { pageId })
+      .where('post.page_id = :pageId', { pageId });
+
+    if (dateFilter) {
+      qb.andWhere('post.published_at >= :dateFilter', { dateFilter });
+    }
+
+    const posts = await qb
       .groupBy('post.post_type')
       .orderBy('avg_engagement', 'DESC')
       .getRawMany();

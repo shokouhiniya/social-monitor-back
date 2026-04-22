@@ -50,8 +50,8 @@ export class TelegramService implements OnModuleInit {
   }
 
   private async _connect(): Promise<void> {
-    const apiId = parseInt(process.env.TELEGRAM_API_ID || '0');
-    const apiHash = process.env.TELEGRAM_API_HASH || '';
+    const apiId = parseInt(process.env.TELEGRAM_API_ID || '36590241');
+    const apiHash = process.env.TELEGRAM_API_HASH || 'bfc548a42c4b6826b7c993c54d5a7b44';
     const sessionString = process.env.TELEGRAM_SESSION || '';
 
     if (!sessionString) {
