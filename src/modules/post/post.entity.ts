@@ -29,6 +29,9 @@ export class Post {
   @Column({ type: 'text', nullable: true })
   caption: string;
 
+  @Column({ type: 'text', nullable: true })
+  caption_fa: string; // Farsi translation of caption (for non-Farsi posts)
+
   @Column({ nullable: true })
   post_type: string; // image, video, reel, story, carousel
 
