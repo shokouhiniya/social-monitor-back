@@ -2,8 +2,12 @@ import { HttpException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like } from 'typeorm';
 import axios from 'axios';
+import * as fs from 'fs';
+import * as path from 'path';
 import { Page } from './page.entity';
 import { Post } from '../post/post.entity';
+import { FieldReport } from '../field-report/field-report.entity';
+import { ActionPlan } from '../action-plan/action-plan.entity';
 import { CreatePageDto, UpdatePageDto, PageQueryDto } from './page.dto';
 import { SettingsService } from '../settings/settings.service';
 
@@ -14,8 +18,48 @@ export class PageService {
     private pageRepository: Repository<Page>,
     @InjectRepository(Post)
     private postRepository: Repository<Post>,
+    @InjectRepository(FieldReport)
+    private fieldReportRepository: Repository<FieldReport>,
+    @InjectRepository(ActionPlan)
+    private actionPlanRepository: Repository<ActionPlan>,
     private readonly settingsService: SettingsService,
   ) {}
+
+  /**
+   * Download media from URL and save locally to public/media/{pageId}/
+   * Returns the local static URL path, or null on failure.
+   */
+  private async downloadMedia(url: string, pageId: number, postId: string): Promise<string | null> {
+    try {
+      const mediaDir = path.join(process.cwd(), 'public', 'media', String(pageId));
+      if (!fs.existsSync(mediaDir)) {
+        fs.mkdirSync(mediaDir, { recursive: true });
+      }
+
+      const response = await axios.get(url, {
+        responseType: 'arraybuffer',
+        timeout: 30000,
+        maxContentLength: 50 * 1024 * 1024, // 50MB max for videos
+      });
+
+      const contentType = response.headers['content-type'] || 'image/jpeg';
+      let ext = '.jpg';
+      if (contentType.includes('png')) ext = '.png';
+      else if (contentType.includes('webp')) ext = '.webp';
+      else if (contentType.includes('mp4') || contentType.includes('video')) ext = '.mp4';
+
+      const filename = `${postId}${ext}`;
+      const filePath = path.join(mediaDir, filename);
+
+      fs.writeFileSync(filePath, Buffer.from(response.data));
+      console.log(`📸 Saved media: ${filename} for page ${pageId} (${(response.data.byteLength / 1024).toFixed(0)}KB)`);
+
+      return `/static/media/${pageId}/${filename}`;
+    } catch (err) {
+      console.warn(`⚠️ Failed to download media for post ${postId}:`, err.message);
+      return null;
+    }
+  }
 
   async findAll(query: PageQueryDto) {
     const { category, platform, cluster, country, search, page = 1, limit = 20 } = query;
@@ -113,7 +157,16 @@ export class PageService {
         const commentsCount = node.edge_media_to_comment?.count || 0;
         const postType = node.is_video ? (node.product_type === 'clips' ? 'reel' : 'video') : (node.__typename === 'GraphSidecar' ? 'carousel' : 'image');
         const publishedAt = node.taken_at_timestamp ? new Date(node.taken_at_timestamp * 1000) : undefined;
-        const mediaUrl = node.display_url || node.thumbnail_src || undefined;
+        const originalMediaUrl = node.display_url || node.thumbnail_src || undefined;
+
+        // Download image locally so CDN URLs don't expire
+        let mediaUrl = originalMediaUrl;
+        if (originalMediaUrl) {
+          const localPath = await this.downloadMedia(originalMediaUrl, page.id, externalId);
+          if (localPath) {
+            mediaUrl = localPath;
+          }
+        }
 
         const post = this.postRepository.create({
           page_id: page.id,
@@ -130,11 +183,80 @@ export class PageService {
         savedPostsCount++;
       }
 
+      // Fetch stories via instagram120 API
+      let savedStoriesCount = 0;
+      try {
+        console.log(`📖 Fetching stories for @${page.username}...`);
+        const storiesResponse = await axios.post(
+          'https://instagram120.p.rapidapi.com/api/instagram/stories',
+          { username: page.username },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'x-rapidapi-key': process.env.RAPIDAPI_KEY,
+              'x-rapidapi-host': 'instagram120.p.rapidapi.com',
+            },
+            timeout: 20000,
+          },
+        );
+
+        const storyItems = storiesResponse.data?.result || [];
+
+        if (storyItems.length > 0) {
+          console.log(`📖 Found ${storyItems.length} active stories`);
+
+          for (const story of storyItems) {
+            const storyId = story.pk || `story_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+            const externalId = `story_${storyId}`;
+
+            // Skip if already saved
+            const existing = await this.postRepository.findOne({
+              where: { external_id: externalId, page_id: page.id },
+            });
+            if (existing) continue;
+
+            const isVideo = !!story.video_versions;
+            const imageUrl = story.image_versions2?.candidates?.[0]?.url || null;
+            const videoUrl = isVideo ? story.video_versions?.[0]?.url : null;
+            const caption = story.caption?.text || story.caption || '';
+            const publishedAt = story.taken_at ? new Date(story.taken_at * 1000) : new Date();
+
+            // Download media locally (stories expire after 24h!)
+            let localMediaUrl: string | null = null;
+            const mediaToDownload = videoUrl || imageUrl;
+            if (mediaToDownload) {
+              localMediaUrl = await this.downloadMedia(mediaToDownload, page.id, externalId);
+            }
+
+            const storyPost = this.postRepository.create({
+              page_id: page.id,
+              external_id: externalId,
+              caption,
+              post_type: 'story',
+              media_url: localMediaUrl || mediaToDownload,
+              likes_count: 0,
+              comments_count: 0,
+              views_count: story.viewer_count || 0,
+              published_at: publishedAt,
+            });
+            await this.postRepository.save(storyPost);
+            savedStoriesCount++;
+            console.log(`  📖 Saved story ${externalId} (${isVideo ? 'video' : 'image'})`);
+          }
+        } else {
+          console.log(`📖 No active stories for @${page.username}`);
+        }
+      } catch (storyErr) {
+        // Don't fail the whole fetch if stories fail
+        console.warn(`⚠️ Could not fetch stories: ${storyErr.message}`);
+      }
+
       return {
         page: saved,
         status: 'fetched',
-        message: `دیتای پروفایل و ${savedPostsCount} پست با موفقیت واکشی شد`,
+        message: `دیتای پروفایل و ${savedPostsCount} پست و ${savedStoriesCount} استوری با موفقیت واکشی شد`,
         posts_fetched: savedPostsCount,
+        stories_fetched: savedStoriesCount,
         raw: {
           is_verified: data.is_verified,
           is_private: data.is_private,
@@ -160,20 +282,28 @@ export class PageService {
     }
   }
 
-  async processWithLLM(id: number) {
+  async processWithLLM(id: number, timeRange?: string) {
     const page = await this.pageRepository.findOne({
       where: { id },
       relations: ['posts'],
     });
     if (!page) throw new HttpException('Page not found', 404);
 
-    // Build context for LLM
-    const recentPosts = (page.posts || [])
-      .sort((a, b) => new Date(b.published_at || b.created_at).getTime() - new Date(a.published_at || a.created_at).getTime())
-      .slice(0, 10);
+    // Only send unprocessed posts to save tokens
+    const allPosts = (page.posts || [])
+      .sort((a, b) => new Date(b.published_at || b.created_at).getTime() - new Date(a.published_at || a.created_at).getTime());
+
+    const unprocessedPosts = allPosts.filter(p => !p.sentiment_label);
+    const recentPosts = unprocessedPosts.length > 0 ? unprocessedPosts.slice(0, 50) : allPosts.slice(0, 10);
+
+    console.log(`🤖 Processing page ${page.name}: ${allPosts.length} total, ${unprocessedPosts.length} unprocessed, sending ${recentPosts.length} to AI`);
+
+    if (recentPosts.length === 0) {
+      return { page, status: 'skipped', message: 'همه پست‌ها قبلاً پردازش شده‌اند' };
+    }
 
     const postsText = recentPosts.map((p, i) =>
-      `پست ${i + 1}: "${(p.caption || '').slice(0, 200)}" (لایک: ${p.likes_count}, کامنت: ${p.comments_count}, لحن: ${p.sentiment_label || 'نامشخص'})`
+      `پست ${i} (id=${p.id}): "${(p.caption || '(بدون متن)').slice(0, 200)}" (لایک: ${p.likes_count}, کامنت: ${p.comments_count}, لحن: ${p.sentiment_label || 'نامشخص'})`
     ).join('\n');
 
     // Load system prompt, extra instructions, model and API key from settings
@@ -199,6 +329,9 @@ export class PageService {
 آخرین پست‌ها:
 ${postsText || 'پستی ثبت نشده'}
 ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : ''}
+
+⚠️ مهم - ترجمه فارسی: اگر متن پستی به زبانی غیر از فارسی نوشته شده (مثلاً عربی، انگلیسی، عبری و غیره)، حتماً ترجمه فارسی آن را در فیلد "caption_fa" قرار بده. اگر پست به فارسی است، فیلد caption_fa را null بگذار.
+
 لطفاً خروجی را دقیقاً به فرمت JSON زیر برگردان (بدون هیچ متن اضافه):
 {
   "category": "دسته‌بندی پیشنهادی (news/activist/celebrity/lifestyle/economy/local_news/politician/documentary/religious/art/student/health/technology/culture/sports/analyst)",
@@ -218,7 +351,7 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
   "keywords": ["کلمه ۱", "کلمه ۲", "کلمه ۳", "کلمه ۴", "کلمه ۵"],
   "language": "زبان اصلی محتوا",
   "posts_analysis": [
-    {"index": 0, "sentiment_score": عدد -1 تا 1, "sentiment_label": "angry/hopeful/neutral/sad", "topics": ["موضوع۱"], "keywords": ["کلمه۱"]}
+    {"post_id": عدد id پست, "sentiment_score": عدد -1 تا 1, "sentiment_label": "angry/hopeful/neutral/sad", "caption_fa": "ترجمه فارسی (فقط برای پست‌های غیرفارسی، در غیر این صورت null)", "topics": ["موضوع۱"], "keywords": ["کلمه۱"]}
   ]
 }`;
 
@@ -263,17 +396,30 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
 
       Object.assign(page, updateData);
       page.last_processed_at = new Date();
+      page.last_processed_timeframe = timeRange || 'all';
       const saved = await this.pageRepository.save(page);
 
       // Update posts with sentiment analysis
       if (analysis.posts_analysis && Array.isArray(analysis.posts_analysis)) {
+        const postMap = new Map(recentPosts.map(p => [p.id, p]));
+
         for (const pa of analysis.posts_analysis) {
-          const post = recentPosts[pa.index];
+          // Support both post_id (new) and index (legacy) formats
+          let post: Post | undefined;
+          if (pa.post_id) {
+            post = postMap.get(pa.post_id);
+          } else if (pa.index !== undefined) {
+            post = recentPosts[pa.index];
+          }
+
           if (post) {
             post.sentiment_score = pa.sentiment_score;
             post.sentiment_label = pa.sentiment_label;
             post.extracted_topics = pa.topics || [];
             post.extracted_keywords = pa.keywords || [];
+            if (pa.caption_fa) {
+              post.caption_fa = pa.caption_fa;
+            }
             await this.postRepository.save(post);
           }
         }
@@ -299,6 +445,12 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
 
   async remove(id: number) {
     const page = await this.findById(id);
+
+    // Delete all related records (foreign key constraints)
+    await this.actionPlanRepository.delete({ page_id: id });
+    await this.fieldReportRepository.delete({ page_id: id });
+    await this.postRepository.delete({ page_id: id });
+
     return await this.pageRepository.remove(page);
   }
 

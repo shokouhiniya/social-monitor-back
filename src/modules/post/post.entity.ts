@@ -29,6 +29,9 @@ export class Post {
   @Column({ type: 'text', nullable: true })
   caption: string;
 
+  @Column({ type: 'text', nullable: true })
+  caption_fa: string; // Farsi translation of caption (for non-Farsi posts)
+
   @Column({ nullable: true })
   post_type: string; // image, video, reel, story, carousel
 
@@ -70,6 +73,9 @@ export class Post {
 
   @Column({ type: 'timestamp', nullable: true })
   published_at: Date;
+
+  @Column({ nullable: true })
+  coverage_type: string; // How non-official sources cover the client: quote, criticism, praise, neutral_mention, analysis, interview, report
 
   @CreateDateColumn({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP(6)' })
   created_at: Date;

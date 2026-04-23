@@ -80,6 +80,9 @@ export class Page {
   @Column({ type: 'timestamp', nullable: true })
   last_processed_at: Date;
 
+  @Column({ nullable: true })
+  last_processed_timeframe: string; // e.g. '24h', '1w', '1m', 'all'
+
   @OneToMany(() => Post, (post) => post.page)
   posts: Post[];
 

@@ -48,6 +48,13 @@ export class CreatePageDto {
 
   @IsOptional()
   keywords?: string[];
+
+  @IsOptional()
+  @IsString()
+  page_category?: string;
+
+  @IsOptional()
+  client_keywords?: string[];
 }
 
 export class UpdatePageDto {
@@ -103,6 +110,13 @@ export class UpdatePageDto {
 
   @IsOptional()
   pain_points?: string[];
+
+  @IsOptional()
+  @IsString()
+  page_category?: string;
+
+  @IsOptional()
+  client_keywords?: string[];
 }
 
 export class PageQueryDto {
