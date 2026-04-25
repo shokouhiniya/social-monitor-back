@@ -390,10 +390,13 @@ export class AnalyticsService {
           'Authorization': `Bearer ${apiKey || process.env.OPENROUTER_API_KEY}`,
           'Content-Type': 'application/json',
         },
-        timeout: 90000,
+        timeout: 120000, // 2 minutes — reasoning models need more time
       },
     );
-    return response.data?.choices?.[0]?.message?.content || '';
+    const choice = response.data?.choices?.[0];
+    return choice?.message?.content
+      || choice?.message?.reasoning
+      || '';
   }
 
   // Cron: Run at 00:00, 06:00, 12:00, 18:00 Tehran time (UTC+3:30 → 20:30, 02:30, 08:30, 14:30 UTC)

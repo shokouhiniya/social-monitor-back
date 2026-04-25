@@ -10,6 +10,8 @@ import { FieldReport } from '../field-report/field-report.entity';
 import { ActionPlan } from '../action-plan/action-plan.entity';
 import { CreatePageDto, UpdatePageDto, PageQueryDto } from './page.dto';
 import { SettingsService } from '../settings/settings.service';
+import { TranscriptionService } from '../transcription/transcription.service';
+import { startProgress, updateProgress, completeProgress, failProgress } from './page-progress';
 
 @Injectable()
 export class PageService {
@@ -23,6 +25,7 @@ export class PageService {
     @InjectRepository(ActionPlan)
     private actionPlanRepository: Repository<ActionPlan>,
     private readonly settingsService: SettingsService,
+    private readonly transcriptionService: TranscriptionService,
   ) {}
 
   /**
@@ -38,8 +41,8 @@ export class PageService {
 
       const response = await axios.get(url, {
         responseType: 'arraybuffer',
-        timeout: 30000,
-        maxContentLength: 50 * 1024 * 1024, // 50MB max for videos
+        timeout: 60000, // 60s for large video downloads
+        maxContentLength: 100 * 1024 * 1024, // 100MB max for videos
       });
 
       const contentType = response.headers['content-type'] || 'image/jpeg';
@@ -57,6 +60,85 @@ export class PageService {
       return `/static/media/${pageId}/${filename}`;
     } catch (err) {
       console.warn(`⚠️ Failed to download media for post ${postId}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Extract on-screen text from a post's image using LLM vision.
+   * Only processes .jpg/.png/.webp files. Skips videos.
+   * Returns the extracted text, or null if none found / not applicable.
+   */
+  private async extractOcrText(post: Post): Promise<string | null> {
+    // Skip if already has OCR text
+    if (post.ocr_text !== null && post.ocr_text !== undefined) {
+      return post.ocr_text;
+    }
+
+    // Only process image files
+    if (!post.media_url) return null;
+    const mediaLower = post.media_url.toLowerCase();
+    const isImage = ['.jpg', '.jpeg', '.png', '.webp'].some(ext => mediaLower.endsWith(ext));
+    if (!isImage) return null;
+
+    // Resolve local path
+    let filePath: string;
+    if (post.media_url.startsWith('/static/')) {
+      filePath = path.join(process.cwd(), 'public', post.media_url.replace('/static/', ''));
+    } else {
+      return null; // Remote URLs not supported for OCR
+    }
+
+    if (!fs.existsSync(filePath)) return null;
+
+    try {
+      // Read and encode image
+      const imageBytes = fs.readFileSync(filePath);
+      // Skip very small images (likely broken) or very large ones (>2MB, too expensive)
+      if (imageBytes.length < 1000 || imageBytes.length > 2 * 1024 * 1024) return null;
+
+      const base64 = imageBytes.toString('base64');
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+
+      const [apiKey, model] = await Promise.all([
+        this.settingsService.get('openrouter_key'),
+        this.settingsService.get('llm_model'),
+      ]);
+
+      const response = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+          model: model || 'google/gemini-2.5-pro',
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Extract ALL visible text from this image exactly as written. Include text overlays, captions, watermarks, and any text in screenshots. Return ONLY the extracted text, nothing else. If there is no text in the image, return exactly: NO_TEXT' },
+              { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+            ],
+          }],
+          max_tokens: 500,
+          temperature: 0.1,
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${apiKey || process.env.OPENROUTER_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000,
+        },
+      );
+
+      const choice = response.data?.choices?.[0];
+      const text = (choice?.message?.content || '').trim();
+
+      if (!text || text === 'NO_TEXT' || text.length < 2) {
+        return null;
+      }
+
+      return text;
+    } catch (err) {
+      console.warn(`⚠️ OCR failed for post ${post.id}: ${err.message}`);
       return null;
     }
   }
@@ -101,13 +183,38 @@ export class PageService {
   }
 
   async create(dto: CreatePageDto) {
+    // Check for duplicate by username + platform
+    if (dto.username && dto.platform) {
+      const existing = await this.pageRepository.findOne({
+        where: { username: dto.username, platform: dto.platform },
+      });
+      if (existing) {
+        throw new HttpException(`پیج @${dto.username} (${dto.platform}) قبلاً ثبت شده است`, 409);
+      }
+    }
     const page = this.pageRepository.create(dto);
     return await this.pageRepository.save(page);
   }
 
   async createBulk(dtos: CreatePageDto[]) {
-    const pages = this.pageRepository.create(dtos);
-    return await this.pageRepository.save(pages);
+    const results: { created: any[]; skipped: any[] } = { created: [], skipped: [] };
+
+    for (const dto of dtos) {
+      if (dto.username && dto.platform) {
+        const existing = await this.pageRepository.findOne({
+          where: { username: dto.username, platform: dto.platform },
+        });
+        if (existing) {
+          results.skipped.push({ username: dto.username, platform: dto.platform, reason: 'duplicate' });
+          continue;
+        }
+      }
+      const page = this.pageRepository.create(dto);
+      const saved = await this.pageRepository.save(page);
+      results.created.push(saved);
+    }
+
+    return results;
   }
 
   async fetchPageData(id: number) {
@@ -115,89 +222,167 @@ export class PageService {
     if (!page) throw new HttpException('Page not found', 404);
     if (!page.username) throw new HttpException('Username is required for fetching', 400);
 
-    try {
-      const response = await axios.get('https://instagram-looter2.p.rapidapi.com/profile', {
-        params: { username: page.username },
-        headers: {
-          'x-rapidapi-key': process.env.RAPIDAPI_KEY,
-          'x-rapidapi-host': 'instagram-looter2.p.rapidapi.com',
-        },
-        timeout: 20000,
-      });
+    const ig120Headers = {
+      'Content-Type': 'application/json',
+      'x-rapidapi-key': process.env.RAPIDAPI_KEY,
+      'x-rapidapi-host': 'instagram120.p.rapidapi.com',
+    };
 
-      const data = response.data;
-      if (!data || !data.status) {
-        throw new Error('Invalid response from API');
+    try {
+      // 1. Fetch profile via instagram120
+      startProgress(id, 'fetch', 'واکشی پروفایل...');
+      console.log(`👤 Fetching profile for @${page.username}...`);
+      const profileResponse = await axios.post(
+        'https://instagram120.p.rapidapi.com/api/instagram/profile',
+        { username: page.username },
+        { headers: ig120Headers, timeout: 20000 },
+      );
+
+      const profileData = profileResponse.data?.result;
+      if (!profileData) {
+        throw new Error('Invalid profile response from API');
       }
 
       const updateData: any = {
-        name: data.full_name || page.name,
-        bio: data.biography || page.bio,
-        followers_count: data.edge_followed_by?.count ?? page.followers_count,
-        following_count: data.edge_follow?.count ?? page.following_count,
-        profile_image_url: data.profile_pic_url_hd || data.profile_pic_url || page.profile_image_url,
+        name: profileData.full_name || page.name,
+        bio: profileData.biography || page.bio,
+        followers_count: profileData.edge_followed_by?.count ?? profileData.follower_count ?? page.followers_count,
+        following_count: profileData.edge_follow?.count ?? profileData.following_count ?? page.following_count,
+        profile_image_url: profileData.profile_pic_url_hd || profileData.profile_pic_url || page.profile_image_url,
       };
 
       Object.assign(page, updateData);
       page.last_fetched_at = new Date();
       const saved = await this.pageRepository.save(page);
-      const edges = data.edge_owner_to_timeline_media?.edges || [];
+
+      // 2. Fetch posts (includes reels with video URLs) via instagram120
+      updateProgress(id, 'fetch', 'واکشی پست‌ها...', 20);
+      console.log(`📥 Fetching posts for @${page.username}...`);
       let savedPostsCount = 0;
-      for (const edge of edges) {
-        const node = edge.node;
-        if (!node) continue;
+      let updatedPostsCount = 0;
+      try {
+        const postsResponse = await axios.post(
+          'https://instagram120.p.rapidapi.com/api/instagram/posts',
+          { username: page.username, maxId: '' },
+          { headers: ig120Headers, timeout: 30000 },
+        );
 
-        const externalId = node.id || node.shortcode;
-        // Skip if already exists
-        const existing = await this.postRepository.findOne({ where: { external_id: externalId } });
-        if (existing) continue;
+        const postsEdges = postsResponse.data?.result?.edges || [];
+        console.log(`📊 Found ${postsEdges.length} posts`);
 
-        const caption = node.edge_media_to_caption?.edges?.[0]?.node?.text || '';
-        const likesCount = node.edge_liked_by?.count || node.edge_media_preview_like?.count || 0;
-        const commentsCount = node.edge_media_to_comment?.count || 0;
-        const postType = node.is_video ? (node.product_type === 'clips' ? 'reel' : 'video') : (node.__typename === 'GraphSidecar' ? 'carousel' : 'image');
-        const publishedAt = node.taken_at_timestamp ? new Date(node.taken_at_timestamp * 1000) : undefined;
-        const originalMediaUrl = node.display_url || node.thumbnail_src || undefined;
+        for (let idx = 0; idx < postsEdges.length; idx++) {
+          const node = postsEdges[idx].node;
+          if (!node) continue;
 
-        // Download image locally so CDN URLs don't expire
-        let mediaUrl = originalMediaUrl;
-        if (originalMediaUrl) {
-          const localPath = await this.downloadMedia(originalMediaUrl, page.id, externalId);
-          if (localPath) {
-            mediaUrl = localPath;
+          const externalId = String(node.pk || node.id || '').split('_')[0];
+          if (!externalId) continue;
+
+          const caption = node.caption?.text || '';
+          const likesCount = node.like_count || 0;
+          const commentsCount = node.comment_count || 0;
+          const viewsCount = node.view_count || node.play_count || 0;
+          const publishedAt = node.taken_at ? new Date(node.taken_at * 1000) : undefined;
+
+          // Determine post type and media URL
+          const mediaType = node.media_type; // 1=image, 2=video, 8=carousel
+          const isClips = node.product_type === 'clips';
+          let postType = 'image';
+          if (mediaType === 2 || isClips) {
+            postType = isClips ? 'reel' : 'video';
+          } else if (mediaType === 8) {
+            postType = 'carousel';
           }
+
+          // Check if post already exists
+          const existing = await this.postRepository.findOne({ where: { external_id: externalId, page_id: page.id } });
+
+          if (existing) {
+            // Update engagement metrics on existing posts
+            let needsUpdate = false;
+            if (likesCount !== existing.likes_count) { existing.likes_count = likesCount; needsUpdate = true; }
+            if (commentsCount !== existing.comments_count) { existing.comments_count = commentsCount; needsUpdate = true; }
+            if (viewsCount && viewsCount !== existing.views_count) { existing.views_count = viewsCount; needsUpdate = true; }
+
+            // If existing reel/video only has a .jpg thumbnail, re-download the actual video
+            if ((postType === 'reel' || postType === 'video') && existing.media_url?.endsWith('.jpg') && node.video_versions?.length > 0) {
+              const videoUrl = node.video_versions[0].url;
+              const localPath = await this.downloadMedia(videoUrl, page.id, externalId);
+              if (localPath) {
+                existing.media_url = localPath;
+                existing.is_transcribed = false; // Reset so it gets transcribed
+                needsUpdate = true;
+                console.log(`  🔄 Upgraded ${externalId} thumbnail → video`);
+              }
+            }
+
+            if (needsUpdate) {
+              await this.postRepository.save(existing);
+              updatedPostsCount++;
+            }
+            updateProgress(id, 'fetch', 'بروزرسانی پست‌ها...', 20 + Math.round(((idx + 1) / postsEdges.length) * 50), `${idx + 1}/${postsEdges.length}`);
+            continue;
+          }
+
+          // New post — download media and save
+          // For video/reel: prefer video_versions (actual video file)
+          // For image: use image_versions2
+          let originalMediaUrl: string | undefined;
+          if ((postType === 'reel' || postType === 'video') && node.video_versions?.length > 0) {
+            originalMediaUrl = node.video_versions[0].url;
+          } else if (node.image_versions2?.candidates?.length > 0) {
+            originalMediaUrl = node.image_versions2.candidates[0].url;
+          } else if (node.carousel_media?.length > 0) {
+            const firstItem = node.carousel_media[0];
+            if (firstItem.video_versions?.length > 0) {
+              originalMediaUrl = firstItem.video_versions[0].url;
+            } else if (firstItem.image_versions2?.candidates?.length > 0) {
+              originalMediaUrl = firstItem.image_versions2.candidates[0].url;
+            }
+          }
+
+          // Download media locally so CDN URLs don't expire
+          let mediaUrl = originalMediaUrl;
+          if (originalMediaUrl) {
+            const localPath = await this.downloadMedia(originalMediaUrl, page.id, externalId);
+            if (localPath) {
+              mediaUrl = localPath;
+            }
+          }
+
+          const post = this.postRepository.create({
+            page_id: page.id,
+            external_id: externalId,
+            shortcode: node.code || externalId,
+            caption,
+            post_type: postType,
+            media_url: mediaUrl,
+            likes_count: likesCount,
+            comments_count: commentsCount,
+            views_count: viewsCount,
+            published_at: publishedAt,
+          });
+          await this.postRepository.save(post);
+          savedPostsCount++;
+          updateProgress(id, 'fetch', 'دانلود مدیا...', 20 + Math.round(((idx + 1) / postsEdges.length) * 50), `${idx + 1}/${postsEdges.length}`);
+          console.log(`  ✅ Saved ${postType} ${externalId} ${(postType === 'reel' || postType === 'video') && mediaUrl?.endsWith('.mp4') ? '(video)' : '(image)'}`);
         }
 
-        const post = this.postRepository.create({
-          page_id: page.id,
-          external_id: externalId,
-          shortcode: node.shortcode || externalId,
-          caption,
-          post_type: postType,
-          media_url: mediaUrl,
-          likes_count: likesCount,
-          comments_count: commentsCount,
-          published_at: publishedAt,
-        });
-        await this.postRepository.save(post);
-        savedPostsCount++;
+        if (updatedPostsCount > 0) {
+          console.log(`  📊 Updated engagement metrics for ${updatedPostsCount} existing posts`);
+        }
+      } catch (postsErr) {
+        console.warn(`⚠️ Could not fetch posts: ${postsErr.message}`);
       }
 
-      // Fetch stories via instagram120 API
+      // 3. Fetch stories via instagram120
+      updateProgress(id, 'fetch', 'واکشی استوری‌ها...', 75);
       let savedStoriesCount = 0;
       try {
         console.log(`📖 Fetching stories for @${page.username}...`);
         const storiesResponse = await axios.post(
           'https://instagram120.p.rapidapi.com/api/instagram/stories',
           { username: page.username },
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              'x-rapidapi-key': process.env.RAPIDAPI_KEY,
-              'x-rapidapi-host': 'instagram120.p.rapidapi.com',
-            },
-            timeout: 20000,
-          },
+          { headers: ig120Headers, timeout: 20000 },
         );
 
         const storyItems = storiesResponse.data?.result || [];
@@ -209,17 +394,25 @@ export class PageService {
             const storyId = story.pk || `story_${Date.now()}_${Math.random().toString(36).slice(2)}`;
             const externalId = `story_${storyId}`;
 
-            // Skip if already saved
-            const existing = await this.postRepository.findOne({
-              where: { external_id: externalId, page_id: page.id },
-            });
-            if (existing) continue;
-
             const isVideo = !!story.video_versions;
             const imageUrl = story.image_versions2?.candidates?.[0]?.url || null;
             const videoUrl = isVideo ? story.video_versions?.[0]?.url : null;
             const caption = story.caption?.text || story.caption || '';
             const publishedAt = story.taken_at ? new Date(story.taken_at * 1000) : new Date();
+
+            // Check if already saved
+            const existing = await this.postRepository.findOne({
+              where: { external_id: externalId, page_id: page.id },
+            });
+
+            if (existing) {
+              // Update view count on existing stories
+              if (story.viewer_count && story.viewer_count !== existing.views_count) {
+                existing.views_count = story.viewer_count;
+                await this.postRepository.save(existing);
+              }
+              continue;
+            }
 
             // Download media locally (stories expire after 24h!)
             let localMediaUrl: string | null = null;
@@ -247,26 +440,23 @@ export class PageService {
           console.log(`📖 No active stories for @${page.username}`);
         }
       } catch (storyErr) {
-        // Don't fail the whole fetch if stories fail
         console.warn(`⚠️ Could not fetch stories: ${storyErr.message}`);
       }
 
+      completeProgress(id, 'fetch');
       return {
         page: saved,
         status: 'fetched',
-        message: `دیتای پروفایل و ${savedPostsCount} پست و ${savedStoriesCount} استوری با موفقیت واکشی شد`,
+        message: `دیتای پروفایل و ${savedPostsCount} پست جدید و ${savedStoriesCount} استوری جدید واکشی شد${updatedPostsCount > 0 ? ` (${updatedPostsCount} پست بروزرسانی شد)` : ''}`,
         posts_fetched: savedPostsCount,
+        posts_updated: updatedPostsCount,
         stories_fetched: savedStoriesCount,
-        raw: {
-          is_verified: data.is_verified,
-          is_private: data.is_private,
-          is_business: data.is_business_account,
-          posts_count: data.edge_owner_to_timeline_media?.count,
-          category: data.category_name || data.business_category_name,
-        },
       };
     } catch (error) {
-      if (error instanceof HttpException) throw error;
+      if (error instanceof HttpException) {
+        failProgress(id, 'fetch', error.message);
+        throw error;
+      }
 
       const statusCode = error?.response?.status || 502;
       const apiMessage = error?.response?.data?.message || error.message;
@@ -275,9 +465,11 @@ export class PageService {
       if (statusCode === 451 || statusCode === 403) {
         page.profile_image_url = page.profile_image_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(page.name)}&background=random&size=200`;
         await this.pageRepository.save(page);
+        failProgress(id, 'fetch', `API blocked (${statusCode})`);
         throw new HttpException(`API اینستاگرام از این IP مسدود است (${statusCode}). لطفاً VPN را بررسی کنید.`, 503);
       }
 
+      failProgress(id, 'fetch', apiMessage);
       throw new HttpException(`واکشی ناموفق (${statusCode}): ${apiMessage}`, 502);
     }
   }
@@ -297,14 +489,76 @@ export class PageService {
     const recentPosts = unprocessedPosts.length > 0 ? unprocessedPosts.slice(0, 50) : allPosts.slice(0, 10);
 
     console.log(`🤖 Processing page ${page.name}: ${allPosts.length} total, ${unprocessedPosts.length} unprocessed, sending ${recentPosts.length} to AI`);
+    startProgress(id, 'process', 'شروع پردازش...');
 
     if (recentPosts.length === 0) {
+      completeProgress(id, 'process');
       return { page, status: 'skipped', message: 'همه پست‌ها قبلاً پردازش شده‌اند' };
     }
 
-    const postsText = recentPosts.map((p, i) =>
-      `پست ${i} (id=${p.id}): "${(p.caption || '(بدون متن)').slice(0, 200)}" (لایک: ${p.likes_count}, کامنت: ${p.comments_count}, لحن: ${p.sentiment_label || 'نامشخص'})`
-    ).join('\n');
+    // Transcribe video posts that haven't been transcribed yet (token-conscious: only once per post)
+    // Important: transcribe ALL video posts for the page, not just the ones going to the LLM,
+    // so that already-processed posts also get their transcription stored for future use.
+    const allVideoPostsToTranscribe = allPosts.filter(
+      p => ['video', 'reel', 'story'].includes(p.post_type) && !p.is_transcribed,
+    );
+    let transcriptionStats = { transcribed: 0, skipped: 0, failed: 0 };
+    if (allVideoPostsToTranscribe.length > 0) {
+      console.log(`🎙️ Transcribing ${allVideoPostsToTranscribe.length} video posts before AI analysis...`);
+      updateProgress(id, 'process', 'رونوشت‌برداری ویدیوها...', 10, `0/${allVideoPostsToTranscribe.length}`);
+      let transcribeIdx = 0;
+      for (const post of allVideoPostsToTranscribe) {
+        await this.transcriptionService.transcribePost(post);
+        transcribeIdx++;
+        updateProgress(id, 'process', 'رونوشت‌برداری ویدیوها...', 10 + Math.round((transcribeIdx / allVideoPostsToTranscribe.length) * 25), `${transcribeIdx}/${allVideoPostsToTranscribe.length}`);
+      }
+      transcriptionStats.transcribed = allVideoPostsToTranscribe.filter(p => p.transcription).length;
+      transcriptionStats.skipped = allVideoPostsToTranscribe.filter(p => p.is_transcribed && !p.transcription).length;
+      transcriptionStats.failed = 0; // actual failures are logged individually
+      console.log(`🎙️ Transcription done: ${transcriptionStats.transcribed} transcribed, ${transcriptionStats.skipped} skipped (no audio file)`);
+    }
+
+    // OCR: Extract on-screen text from image posts that haven't been OCR'd yet
+    const postsNeedingOcr = recentPosts.filter(
+      p => (p.ocr_text === null || p.ocr_text === undefined) && p.media_url &&
+        ['.jpg', '.jpeg', '.png', '.webp'].some(ext => (p.media_url || '').toLowerCase().endsWith(ext)),
+    );
+    let ocrCount = 0;
+    if (postsNeedingOcr.length > 0) {
+      console.log(`🔍 Running OCR on ${postsNeedingOcr.length} image posts...`);
+      updateProgress(id, 'process', 'استخراج متن تصاویر...', 35, `0/${postsNeedingOcr.length}`);
+      for (let i = 0; i < postsNeedingOcr.length; i++) {
+        const post = postsNeedingOcr[i];
+        const ocrResult = await this.extractOcrText(post);
+        if (ocrResult) {
+          post.ocr_text = ocrResult;
+          await this.postRepository.save(post);
+          ocrCount++;
+          console.log(`  🔍 OCR post ${post.id}: "${ocrResult.slice(0, 60)}..."`);
+        } else {
+          // Mark as processed (empty string = no text found) so we don't retry
+          post.ocr_text = '';
+          await this.postRepository.save(post);
+        }
+        updateProgress(id, 'process', 'استخراج متن تصاویر...', 35 + Math.round(((i + 1) / postsNeedingOcr.length) * 5), `${i + 1}/${postsNeedingOcr.length}`);
+      }
+      console.log(`🔍 OCR done: ${ocrCount} posts had on-screen text`);
+    }
+
+    // Build post descriptions for the LLM — include transcription and OCR text
+    const postsText = recentPosts.map((p, i) => {
+      let text = `پست ${i} (id=${p.id}, نوع: ${p.post_type || 'text'}): "${(p.caption || '(بدون متن)').slice(0, 200)}" (لایک: ${p.likes_count}, کامنت: ${p.comments_count}, لحن: ${p.sentiment_label || 'نامشخص'})`;
+      if (p.transcription) {
+        text += `\n  [رونوشت صوتی/تصویری]: "${p.transcription.slice(0, 500)}"`;
+      }
+      if (p.ocr_text) {
+        text += `\n  [متن روی تصویر]: "${p.ocr_text.slice(0, 300)}"`;
+      }
+      if (p.manual_context) {
+        text += `\n  [توضیح دستی]: "${p.manual_context.slice(0, 500)}"`;
+      }
+      return text;
+    }).join('\n');
 
     // Load system prompt, extra instructions, model and API key from settings
     const [systemPrompt, extraInstructions, apiKey, model] = await Promise.all([
@@ -332,6 +586,12 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
 
 ⚠️ مهم - ترجمه فارسی: اگر متن پستی به زبانی غیر از فارسی نوشته شده (مثلاً عربی، انگلیسی، عبری و غیره)، حتماً ترجمه فارسی آن را در فیلد "caption_fa" قرار بده. اگر پست به فارسی است، فیلد caption_fa را null بگذار.
 
+⚠️ مهم - رونوشت ویدیو: برخی پست‌ها دارای رونوشت صوتی/تصویری هستند (با برچسب [رونوشت صوتی/تصویری] مشخص شده). این متن از صدای ویدیو استخراج شده و باید در تحلیل احساسات، موضوعات و کلمات کلیدی آن پست لحاظ شود. اگر رونوشت به زبانی غیر از فارسی است، ترجمه فارسی آن را در فیلد "transcription_fa" قرار بده.
+
+⚠️ مهم - متن روی تصویر: برخی پست‌ها دارای متن استخراج‌شده از تصویر هستند (با برچسب [متن روی تصویر] مشخص شده). این متن از روی عکس پست خوانده شده و باید در تحلیل احساسات، موضوعات و کلمات کلیدی آن پست لحاظ شود. اگر متن روی تصویر به زبانی غیر از فارسی است، ترجمه فارسی آن را در فیلد "ocr_text_fa" قرار بده.
+
+⚠️ مهم - تحلیل جامع: تمام منابع متنی یک پست (کپشن، رونوشت صوتی، متن روی تصویر، توضیح دستی) باید در تحلیل احساسات، موضوعات و کلمات کلیدی آن پست لحاظ شوند. هر منبع به یک اندازه مهم است. توضیح دستی (با برچسب [توضیح دستی]) توسط تحلیل‌گر انسانی نوشته شده و شامل اطلاعاتی است که فقط با دیدن ویدیو یا تفسیر تصویر قابل درک است.
+
 لطفاً خروجی را دقیقاً به فرمت JSON زیر برگردان (بدون هیچ متن اضافه):
 {
   "category": "دسته‌بندی پیشنهادی (news/activist/celebrity/lifestyle/economy/local_news/politician/documentary/religious/art/student/health/technology/culture/sports/analyst)",
@@ -351,11 +611,12 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
   "keywords": ["کلمه ۱", "کلمه ۲", "کلمه ۳", "کلمه ۴", "کلمه ۵"],
   "language": "زبان اصلی محتوا",
   "posts_analysis": [
-    {"post_id": عدد id پست, "sentiment_score": عدد -1 تا 1, "sentiment_label": "angry/hopeful/neutral/sad", "caption_fa": "ترجمه فارسی (فقط برای پست‌های غیرفارسی، در غیر این صورت null)", "topics": ["موضوع۱"], "keywords": ["کلمه۱"]}
+    {"post_id": عدد id پست, "sentiment_score": عدد -1 تا 1, "sentiment_label": "angry/hopeful/neutral/sad", "caption_fa": "ترجمه فارسی (فقط برای پست‌های غیرفارسی، در غیر این صورت null)", "transcription_fa": "ترجمه فارسی رونوشت صوتی (فقط اگر رونوشت به زبان غیرفارسی باشد، در غیر این صورت null)", "ocr_text_fa": "ترجمه فارسی متن روی تصویر (فقط اگر متن به زبان غیرفارسی باشد، در غیر این صورت null)", "topics": ["موضوع۱"], "keywords": ["کلمه۱"]}
   ]
 }`;
 
     try {
+      updateProgress(id, 'process', 'ارسال به هوش مصنوعی...', 40);
       const response = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
@@ -368,11 +629,21 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
             'Authorization': `Bearer ${apiKey || process.env.OPENROUTER_API_KEY}`,
             'Content-Type': 'application/json',
           },
-          timeout: 60000,
+          timeout: 120000, // 2 minutes — reasoning models need more time
         },
       );
 
-      const content = response.data?.choices?.[0]?.message?.content || '';
+      const choice = response.data?.choices?.[0];
+      // Some models (Gemini 2.5 Pro) return reasoning in a separate field
+      // and may put the actual content in `content` or only in `reasoning`
+      const content = choice?.message?.content
+        || choice?.message?.reasoning
+        || '';
+
+      if (!content) {
+        console.error('❌ LLM returned empty response:', JSON.stringify(response.data, null, 2));
+        throw new HttpException('LLM returned empty response — try again or switch to a different model in settings', 502);
+      }
 
       // Extract JSON from response
       const jsonMatch = content.match(/\{[\s\S]*\}/);
@@ -383,6 +654,7 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
       const analysis = JSON.parse(jsonMatch[0]);
 
       // Update page with LLM analysis
+      updateProgress(id, 'process', 'ذخیره نتایج تحلیل...', 80);
       const updateData: any = {};
       if (analysis.category) updateData.category = analysis.category;
       if (analysis.cluster) updateData.cluster = analysis.cluster;
@@ -420,20 +692,35 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
             if (pa.caption_fa) {
               post.caption_fa = pa.caption_fa;
             }
+            if (pa.transcription_fa) {
+              post.transcription_fa = pa.transcription_fa;
+            }
+            if (pa.ocr_text_fa) {
+              post.ocr_text_fa = pa.ocr_text_fa;
+            }
             await this.postRepository.save(post);
           }
         }
       }
 
+      completeProgress(id, 'process');
       return {
         page: saved,
         status: 'processed',
         message: 'تحلیل هوشمند با موفقیت انجام شد',
         analysis,
+        transcription: transcriptionStats,
       };
     } catch (error) {
-      if (error instanceof HttpException) throw error;
-      throw new HttpException(`خطا در پردازش LLM: ${error.message}`, 502);
+      if (error instanceof HttpException) {
+        failProgress(id, 'process', error.message);
+        throw error;
+      }
+      const statusCode = error?.response?.status || 502;
+      const apiMessage = error?.response?.data?.error?.message || error?.response?.data?.message || error.message;
+      console.error(`❌ LLM processing failed (${statusCode}):`, apiMessage);
+      failProgress(id, 'process', apiMessage);
+      throw new HttpException(`خطا در پردازش LLM (${statusCode}): ${apiMessage}`, 502);
     }
   }
 

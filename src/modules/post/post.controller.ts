@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { PostService } from './post.service';
 import { CreatePostDto, PostQueryDto } from './post.dto';
 
@@ -57,6 +57,11 @@ export class PostController {
   @Post('bulk')
   createBulk(@Body() dtos: CreatePostDto[]) {
     return this.postService.createBulk(dtos);
+  }
+
+  @Patch(':id/context')
+  updateManualContext(@Param('id') id: number, @Body('manual_context') manualContext: string) {
+    return this.postService.updateManualContext(id, manualContext);
   }
 
   @Delete(':id')

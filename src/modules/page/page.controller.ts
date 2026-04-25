@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { PageService } from './page.service';
 import { CreatePageDto, UpdatePageDto, PageQueryDto } from './page.dto';
+import { getProgress } from './page-progress';
 
 @Controller('pages')
 export class PageController {
@@ -34,6 +35,11 @@ export class PageController {
   @Get('analytics/segments')
   getSegmentCounts() {
     return this.pageService.getSegmentCounts();
+  }
+
+  @Get(':id/progress')
+  getPageProgress(@Param('id') id: number, @Query('operation') operation?: 'fetch' | 'process') {
+    return getProgress(id, operation);
   }
 
   @Get(':id/related')

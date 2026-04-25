@@ -18,6 +18,7 @@ import { InteractionModule } from './modules/interaction/interaction.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { TelegramModule } from './modules/telegram/telegram.module';
 import { TwitterModule } from './modules/twitter/twitter.module';
+import { TranscriptionModule } from './modules/transcription/transcription.module';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ResponseInterceptor } from './libs/interceptors/response.interceptor';
 
@@ -38,6 +39,7 @@ import { ResponseInterceptor } from './libs/interceptors/response.interceptor';
     SettingsModule,
     TelegramModule,
     TwitterModule,
+    TranscriptionModule,
   ],
   controllers: [AppController],
   providers: [

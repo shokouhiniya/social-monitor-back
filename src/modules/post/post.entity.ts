@@ -77,6 +77,24 @@ export class Post {
   @Column({ nullable: true })
   coverage_type: string; // How non-official sources cover the client: quote, criticism, praise, neutral_mention, analysis, interview, report
 
+  @Column({ type: 'text', nullable: true })
+  transcription: string | null; // Audio/video transcription text (from Soniox)
+
+  @Column({ type: 'text', nullable: true })
+  transcription_fa: string | null; // Farsi translation of transcription (for non-Farsi audio)
+
+  @Column({ type: 'text', nullable: true })
+  ocr_text: string | null; // On-screen text extracted from post image via LLM vision
+
+  @Column({ type: 'text', nullable: true })
+  ocr_text_fa: string | null; // Farsi translation of on-screen text (for non-Farsi text)
+
+  @Column({ type: 'text', nullable: true })
+  manual_context: string | null; // Human-provided context about the post content (what's in the video/image)
+
+  @Column({ type: 'boolean', default: false })
+  is_transcribed: boolean; // Whether transcription has been attempted
+
   @CreateDateColumn({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP(6)' })
   created_at: Date;
 }

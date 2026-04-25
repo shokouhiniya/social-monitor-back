@@ -50,6 +50,12 @@ export class PostService {
     return await this.postRepository.save(posts);
   }
 
+  async updateManualContext(id: number, manualContext: string) {
+    const post = await this.findById(id);
+    post.manual_context = manualContext || null;
+    return await this.postRepository.save(post);
+  }
+
   async remove(id: number) {
     const post = await this.findById(id);
     return await this.postRepository.remove(post);
