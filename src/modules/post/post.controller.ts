@@ -44,6 +44,11 @@ export class PostController {
     return this.postService.getTopicClusters();
   }
 
+  @Get('pulse-by-page')
+  getPulseByPage(@Query('days') days: number) {
+    return this.postService.getPulseByPage(days || 7);
+  }
+
   @Get(':id')
   findById(@Param('id') id: number) {
     return this.postService.findById(id);
@@ -62,6 +67,11 @@ export class PostController {
   @Patch(':id/context')
   updateManualContext(@Param('id') id: number, @Body('manual_context') manualContext: string) {
     return this.postService.updateManualContext(id, manualContext);
+  }
+
+  @Post(':id/process')
+  processSinglePost(@Param('id') id: number) {
+    return this.postService.processSinglePost(id);
   }
 
   @Delete(':id')

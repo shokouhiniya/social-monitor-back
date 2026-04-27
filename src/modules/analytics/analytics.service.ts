@@ -65,7 +65,7 @@ export class AnalyticsService {
     if (!globalTopics || globalTopics.length === 0) {
       const topicsStr = await this.settingsService.get('silence_radar_topics');
       globalTopics = topicsStr
-        ? topicsStr.split(',').map((t) => t.trim()).filter(Boolean)
+        ? topicsStr.split(/[,،]/).map((t) => t.trim()).filter(Boolean)
         : [];
     }
     if (globalTopics.length === 0) {
@@ -190,24 +190,32 @@ export class AnalyticsService {
   }
 
   async getNetworkPulse() {
-    // Real-time activity level of the entire network
     return await this.postService.getNetworkPulse();
   }
 
+  async getNetworkPulseWeekly() {
+    return await this.postService.getNetworkPulseWeekly();
+  }
+
   async getGhostPages() {
-    // Pages with very low activity or content deletion patterns
     return await this.pageService.getGhostPages();
   }
 
-  async getPeriodicReport() {
+  async getActivityIndex() {
+    return await this.postService.getActivityIndex();
+  }
+
+  async getPeriodicReport(hours = 6) {
     const now = new Date();
-    const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+    const periodStart = new Date(now.getTime() - hours * 60 * 60 * 1000);
+    // Use days for the data queries (minimum 1 day to avoid empty results for short windows)
+    const queryDays = Math.max(1, Math.ceil(hours / 24));
 
     const [keywords, topics, sentiment, reshares, categories, ghostPages] = await Promise.all([
-      this.postService.getTrendingKeywords(1),
-      this.postService.getTopicGravity(1),
-      this.postService.getSentimentTimeline(undefined, 1),
-      this.postService.getReshareTree(1),
+      this.postService.getTrendingKeywords(queryDays),
+      this.postService.getTopicGravity(queryDays),
+      this.postService.getSentimentTimeline(undefined, queryDays),
+      this.postService.getReshareTree(queryDays),
       this.pageService.getCategoryDistribution(),
       this.pageService.getGhostPages(),
     ]);
@@ -223,9 +231,18 @@ export class AnalyticsService {
 
     const sentimentLabel = avgSentiment > 0.2 ? 'امیدوار' : avgSentiment < -0.2 ? 'خشمگین' : 'خنثی';
 
+    // Human-readable period label
+    const periodLabel = hours < 24
+      ? `${hours} ساعت اخیر`
+      : hours === 24 ? '۲۴ ساعت اخیر'
+      : hours <= 72 ? `${Math.round(hours / 24)} روز اخیر`
+      : hours <= 168 ? '۱ هفته اخیر'
+      : hours <= 720 ? '۱ ماه اخیر'
+      : `${Math.round(hours / 24)} روز اخیر`;
+
     const paragraphs: string[] = [];
 
-    paragraphs.push(`در بازه ۶ ساعت اخیر (${sixHoursAgo.toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })} تا ${now.toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })}), مجموعاً ${totalPosts} پست از ${totalPages} پیج تحت پایش ثبت شده است.`);
+    paragraphs.push(`در بازه ${periodLabel} (${periodStart.toLocaleString('fa-IR', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })} تا ${now.toLocaleString('fa-IR', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}), مجموعاً ${totalPosts} پست از ${totalPages} پیج تحت پایش ثبت شده است.`);
 
     if (topTopics.length > 0) {
       paragraphs.push(`موضوعات داغ شبکه شامل «${topTopics.join('»، «')}» بوده و بیشترین حجم محتوا حول محور «${topTopics[0]}» تولید شده است.`);
@@ -246,8 +263,10 @@ export class AnalyticsService {
     return {
       report: paragraphs.join(' '),
       generated_at: now.toISOString(),
-      period_start: sixHoursAgo.toISOString(),
+      period_start: periodStart.toISOString(),
       period_end: now.toISOString(),
+      period_hours: hours,
+      period_label: periodLabel,
       top_keywords: topKeywords,
       top_topics: topTopics,
       avg_sentiment: avgSentiment,
@@ -277,7 +296,7 @@ export class AnalyticsService {
     // Target narrative keywords from settings
     const targetNarrativeStr = await this.settingsService.get('target_narrative');
     const targetKeywords = targetNarrativeStr
-      ? targetNarrativeStr.split(',').map((k) => k.trim()).filter(Boolean)
+      ? targetNarrativeStr.split(/[,،]/).map((k) => k.trim()).filter(Boolean)
       : ['مقاومت', 'فلسطین', 'غزه', 'حقوق بشر', 'عدالت'];
 
     // Combine keywords and topics for broader matching
@@ -350,7 +369,38 @@ export class AnalyticsService {
       : 0;
 
     const mood = avgSentiment > 0.2 ? 'امیدوار' : avgSentiment < -0.2 ? 'ملتهب' : 'در وضعیت انتظار';
-    const headline = `امروز شبکه ${mood} است؛ تمرکز اصلی روی «${topTopic}» ${topKeyword ? `و «${topKeyword}»` : ''} قرار دارد.`;
+
+    // Generate headline with LLM
+    const topicsStr = topics.slice(0, 5).map((t) => t.topic).join('، ');
+    const kwStr = keywords.slice(0, 5).map((k) => k.keyword).join('، ');
+    let headline: string;
+    try {
+      const [apiKey, model] = await Promise.all([
+        this.settingsService.get('openrouter_key'),
+        this.settingsService.get('llm_model'),
+      ]);
+      const response = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+          model: model || 'google/gemini-2.5-pro',
+          messages: [{ role: 'user', content: `بر اساس اطلاعات زیر، یک جمله کوتاه و تاثیرگذار (حداکثر ۳۰ کلمه) به فارسی بنویس که خلاصه وضعیت امروز شبکه باشد. فقط یک جمله برگردان، بدون هیچ توضیح اضافه.\n\nموضوعات داغ: ${topicsStr}\nکلمات کلیدی: ${kwStr}\nلحن غالب: ${mood}\nامتیاز احساسات: ${avgSentiment.toFixed(2)}` }],
+          max_tokens: 500,
+          temperature: 0.5,
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${apiKey || process.env.OPENROUTER_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 120000,
+        },
+      );
+      const choice = response.data?.choices?.[0];
+      headline = (choice?.message?.content || choice?.message?.reasoning || '').replace(/^["«]|["»]$/g, '').trim();
+      if (!headline) throw new Error('empty');
+    } catch {
+      headline = `امروز شبکه ${mood} است؛ تمرکز اصلی روی «${topTopic}» ${topKeyword ? `و «${topKeyword}»` : ''} قرار دارد.`;
+    }
 
     return {
       headline,
@@ -498,11 +548,18 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
     }
   }
 
-  async generateReportWithLLM() {
+  async generateReportWithLLM(hours = 6) {
+    const queryDays = Math.max(1, Math.ceil(hours / 24));
     const pages = await this.pageService.findAll({ page: 1, limit: 50 });
-    const keywords = await this.postService.getTrendingKeywords(7);
-    const topics = await this.postService.getTopicGravity(7);
-    const sentiment = await this.postService.getSentimentTimeline(undefined, 7);
+    const keywords = await this.postService.getTrendingKeywords(queryDays);
+    const topics = await this.postService.getTopicGravity(queryDays);
+    const sentiment = await this.postService.getSentimentTimeline(undefined, queryDays);
+
+    const periodLabel = hours < 24 ? `${hours} ساعت اخیر`
+      : hours === 24 ? '۲۴ ساعت اخیر'
+      : hours <= 72 ? `${Math.round(hours / 24)} روز اخیر`
+      : hours <= 168 ? '۱ هفته اخیر'
+      : '۱ ماه اخیر';
 
     const pagesInfo = pages.data.slice(0, 20).map((p) =>
       `${p.name}: نفوذ ${p.influence_score}, اعتبار ${p.credibility_score}, دسته ${p.category}`
@@ -514,13 +571,14 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
       ? (sentiment.reduce((s, i) => s + Number(i.avg_sentiment || 0), 0) / sentiment.length).toFixed(2)
       : '0';
 
-    // Load system prompt and extra instructions from settings
     const [systemPrompt, extraInstructions] = await Promise.all([
       this.settingsService.get('prompt_report_generation'),
       this.settingsService.get('prompt_report_generation_extra'),
     ]);
 
     const prompt = `${systemPrompt || 'تو یک تحلیل‌گر ارشد رسانه‌ای هستی. بر اساس دیتای زیر، یک گزارش تحلیلی جامع بنویس.'}
+
+بازه زمانی تحلیل: ${periodLabel}
 
 پیج‌های شبکه:
 ${pagesInfo}

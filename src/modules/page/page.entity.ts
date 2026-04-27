@@ -26,6 +26,9 @@ export class Page {
   @Column({ nullable: true })
   category: string; // blogger, news, activist, lifestyle, etc.
 
+  @Column({ nullable: true, default: null })
+  category_source: string; // 'manual' or 'ai' — tracks who set the category
+
   @Column({ nullable: true })
   country: string;
 

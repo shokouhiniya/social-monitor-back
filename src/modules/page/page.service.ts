@@ -109,16 +109,17 @@ export class PageService {
       const response = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
-          model: model || 'google/gemini-2.5-pro',
+          // Use Flash for OCR — faster, no reasoning overhead, excellent at text extraction
+          model: 'google/gemini-2.0-flash-001',
           messages: [{
             role: 'user',
             content: [
-              { type: 'text', text: 'Extract ALL visible text from this image exactly as written. Include text overlays, captions, watermarks, and any text in screenshots. Return ONLY the extracted text, nothing else. If there is no text in the image, return exactly: NO_TEXT' },
+              { type: 'text', text: 'Extract ALL visible text from this image exactly as written. Include every line of text overlays, captions, watermarks, subtitles, and any text in screenshots. Preserve line breaks. Return ONLY the extracted text, nothing else. If there is no text in the image, return exactly: NO_TEXT' },
               { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
             ],
           }],
-          max_tokens: 500,
-          temperature: 0.1,
+          max_tokens: 2000,
+          temperature: 0,
         },
         {
           headers: {
@@ -191,6 +192,9 @@ export class PageService {
       if (existing) {
         throw new HttpException(`پیج @${dto.username} (${dto.platform}) قبلاً ثبت شده است`, 409);
       }
+    }
+    if (dto.category) {
+      (dto as any).category_source = 'manual';
     }
     const page = this.pageRepository.create(dto);
     return await this.pageRepository.save(page);
@@ -656,7 +660,7 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
       // Update page with LLM analysis
       updateProgress(id, 'process', 'ذخیره نتایج تحلیل...', 80);
       const updateData: any = {};
-      if (analysis.category) updateData.category = analysis.category;
+      if (analysis.category) { updateData.category = analysis.category; updateData.category_source = 'ai'; }
       if (analysis.cluster) updateData.cluster = analysis.cluster;
       if (analysis.credibility_score !== undefined) updateData.credibility_score = analysis.credibility_score;
       if (analysis.influence_score !== undefined) updateData.influence_score = analysis.influence_score;
@@ -726,6 +730,10 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
 
   async update(id: number, dto: UpdatePageDto) {
     const page = await this.findById(id);
+    // Track if category was manually changed
+    if (dto.category && dto.category !== page.category) {
+      (dto as any).category_source = 'manual';
+    }
     Object.assign(page, dto);
     return await this.pageRepository.save(page);
   }

@@ -38,14 +38,24 @@ export class AnalyticsController {
     return this.analyticsService.getNetworkPulse();
   }
 
+  @Get('network-pulse-weekly')
+  getNetworkPulseWeekly() {
+    return this.analyticsService.getNetworkPulseWeekly();
+  }
+
   @Get('ghost-pages')
   getGhostPages() {
     return this.analyticsService.getGhostPages();
   }
 
+  @Get('activity-index')
+  getActivityIndex() {
+    return this.analyticsService.getActivityIndex();
+  }
+
   @Get('periodic-report')
-  getPeriodicReport() {
-    return this.analyticsService.getPeriodicReport();
+  getPeriodicReport(@Query('hours') hours?: number) {
+    return this.analyticsService.getPeriodicReport(hours ? Number(hours) : 6);
   }
 
   @Get('latest-posts')
@@ -94,8 +104,8 @@ export class AnalyticsController {
   }
 
   @Post('generate-report')
-  generateReport() {
-    return this.analyticsService.generateReportWithLLM();
+  generateReport(@Body('hours') hours?: number) {
+    return this.analyticsService.generateReportWithLLM(hours ? Number(hours) : 6);
   }
 
   @Post('refresh')
