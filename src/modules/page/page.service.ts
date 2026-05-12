@@ -478,21 +478,26 @@ export class PageService {
     }
   }
 
-  async processWithLLM(id: number, timeRange?: string) {
+  async processWithLLM(id: number, timeRange?: string, services?: string[], force?: boolean) {
     const page = await this.pageRepository.findOne({
       where: { id },
       relations: ['posts'],
     });
     if (!page) throw new HttpException('Page not found', 404);
 
-    // Only send unprocessed posts to save tokens
+    // Determine which services to run (default: all)
+    const enabledServices = services && services.length > 0
+      ? new Set(services)
+      : new Set(['transcription', 'ocr', 'translation', 'analysis']);
+
+    // Only send unprocessed posts to save tokens (unless force mode)
     const allPosts = (page.posts || [])
       .sort((a, b) => new Date(b.published_at || b.created_at).getTime() - new Date(a.published_at || a.created_at).getTime());
 
-    const unprocessedPosts = allPosts.filter(p => !p.sentiment_label);
+    const unprocessedPosts = force ? allPosts : allPosts.filter(p => !p.sentiment_label);
     const recentPosts = unprocessedPosts.length > 0 ? unprocessedPosts.slice(0, 50) : allPosts.slice(0, 10);
 
-    console.log(`🤖 Processing page ${page.name}: ${allPosts.length} total, ${unprocessedPosts.length} unprocessed, sending ${recentPosts.length} to AI`);
+    console.log(`🤖 Processing page ${page.name}: ${allPosts.length} total, ${unprocessedPosts.length} to process, services: ${[...enabledServices].join(',')}, force: ${!!force}`);
     startProgress(id, 'process', 'شروع پردازش...');
 
     if (recentPosts.length === 0) {
@@ -500,53 +505,62 @@ export class PageService {
       return { page, status: 'skipped', message: 'همه پست‌ها قبلاً پردازش شده‌اند' };
     }
 
-    // Transcribe video posts that haven't been transcribed yet (token-conscious: only once per post)
-    // Important: transcribe ALL video posts for the page, not just the ones going to the LLM,
-    // so that already-processed posts also get their transcription stored for future use.
-    const allVideoPostsToTranscribe = allPosts.filter(
-      p => ['video', 'reel', 'story'].includes(p.post_type) && !p.is_transcribed,
-    );
+    // Transcription
     let transcriptionStats = { transcribed: 0, skipped: 0, failed: 0 };
-    if (allVideoPostsToTranscribe.length > 0) {
-      console.log(`🎙️ Transcribing ${allVideoPostsToTranscribe.length} video posts before AI analysis...`);
-      updateProgress(id, 'process', 'رونوشت‌برداری ویدیوها...', 10, `0/${allVideoPostsToTranscribe.length}`);
-      let transcribeIdx = 0;
-      for (const post of allVideoPostsToTranscribe) {
-        await this.transcriptionService.transcribePost(post);
-        transcribeIdx++;
-        updateProgress(id, 'process', 'رونوشت‌برداری ویدیوها...', 10 + Math.round((transcribeIdx / allVideoPostsToTranscribe.length) * 25), `${transcribeIdx}/${allVideoPostsToTranscribe.length}`);
+    if (enabledServices.has('transcription')) {
+      const allVideoPostsToTranscribe = allPosts.filter(
+        p => ['video', 'reel', 'story'].includes(p.post_type) && (force || !p.is_transcribed),
+      );
+      if (force) {
+        for (const post of allVideoPostsToTranscribe) {
+          post.is_transcribed = false;
+          post.transcription = null;
+          post.transcription_fa = null;
+        }
       }
-      transcriptionStats.transcribed = allVideoPostsToTranscribe.filter(p => p.transcription).length;
-      transcriptionStats.skipped = allVideoPostsToTranscribe.filter(p => p.is_transcribed && !p.transcription).length;
-      transcriptionStats.failed = 0; // actual failures are logged individually
-      console.log(`🎙️ Transcription done: ${transcriptionStats.transcribed} transcribed, ${transcriptionStats.skipped} skipped (no audio file)`);
+      if (allVideoPostsToTranscribe.length > 0) {
+        console.log(`🎙️ Transcribing ${allVideoPostsToTranscribe.length} video posts before AI analysis...`);
+        updateProgress(id, 'process', 'رونوشت‌برداری ویدیوها...', 10, `0/${allVideoPostsToTranscribe.length}`);
+        let transcribeIdx = 0;
+        for (const post of allVideoPostsToTranscribe) {
+          await this.transcriptionService.transcribePost(post);
+          transcribeIdx++;
+          updateProgress(id, 'process', 'رونوشت‌برداری ویدیوها...', 10 + Math.round((transcribeIdx / allVideoPostsToTranscribe.length) * 25), `${transcribeIdx}/${allVideoPostsToTranscribe.length}`);
+        }
+        transcriptionStats.transcribed = allVideoPostsToTranscribe.filter(p => p.transcription).length;
+        transcriptionStats.skipped = allVideoPostsToTranscribe.filter(p => p.is_transcribed && !p.transcription).length;
+        console.log(`🎙️ Transcription done: ${transcriptionStats.transcribed} transcribed, ${transcriptionStats.skipped} skipped`);
+      }
     }
 
-    // OCR: Extract on-screen text from image posts that haven't been OCR'd yet
-    const postsNeedingOcr = recentPosts.filter(
-      p => (p.ocr_text === null || p.ocr_text === undefined) && p.media_url &&
-        ['.jpg', '.jpeg', '.png', '.webp'].some(ext => (p.media_url || '').toLowerCase().endsWith(ext)),
-    );
+    // OCR: Extract on-screen text from image posts
     let ocrCount = 0;
-    if (postsNeedingOcr.length > 0) {
-      console.log(`🔍 Running OCR on ${postsNeedingOcr.length} image posts...`);
-      updateProgress(id, 'process', 'استخراج متن تصاویر...', 35, `0/${postsNeedingOcr.length}`);
-      for (let i = 0; i < postsNeedingOcr.length; i++) {
-        const post = postsNeedingOcr[i];
-        const ocrResult = await this.extractOcrText(post);
-        if (ocrResult) {
-          post.ocr_text = ocrResult;
-          await this.postRepository.save(post);
-          ocrCount++;
-          console.log(`  🔍 OCR post ${post.id}: "${ocrResult.slice(0, 60)}..."`);
-        } else {
-          // Mark as processed (empty string = no text found) so we don't retry
-          post.ocr_text = '';
-          await this.postRepository.save(post);
-        }
-        updateProgress(id, 'process', 'استخراج متن تصاویر...', 35 + Math.round(((i + 1) / postsNeedingOcr.length) * 5), `${i + 1}/${postsNeedingOcr.length}`);
+    if (enabledServices.has('ocr')) {
+      const postsNeedingOcr = recentPosts.filter(
+        p => (force || p.ocr_text === null || p.ocr_text === undefined) && p.media_url &&
+          ['.jpg', '.jpeg', '.png', '.webp'].some(ext => (p.media_url || '').toLowerCase().endsWith(ext)),
+      );
+      if (force) {
+        for (const post of postsNeedingOcr) { post.ocr_text = null; post.ocr_text_fa = null; }
       }
-      console.log(`🔍 OCR done: ${ocrCount} posts had on-screen text`);
+      if (postsNeedingOcr.length > 0) {
+        console.log(`🔍 Running OCR on ${postsNeedingOcr.length} image posts...`);
+        updateProgress(id, 'process', 'استخراج متن تصاویر...', 35, `0/${postsNeedingOcr.length}`);
+        for (let i = 0; i < postsNeedingOcr.length; i++) {
+          const post = postsNeedingOcr[i];
+          const ocrResult = await this.extractOcrText(post);
+          if (ocrResult) {
+            post.ocr_text = ocrResult;
+            await this.postRepository.save(post);
+            ocrCount++;
+          } else {
+            post.ocr_text = '';
+            await this.postRepository.save(post);
+          }
+          updateProgress(id, 'process', 'استخراج متن تصاویر...', 35 + Math.round(((i + 1) / postsNeedingOcr.length) * 5), `${i + 1}/${postsNeedingOcr.length}`);
+        }
+        console.log(`🔍 OCR done: ${ocrCount} posts had on-screen text`);
+      }
     }
 
     // Build post descriptions for the LLM — include transcription and OCR text
@@ -619,6 +633,7 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
   ]
 }`;
 
+    if (enabledServices.has('analysis') || enabledServices.has('translation')) {
     try {
       updateProgress(id, 'process', 'ارسال به هوش مصنوعی...', 40);
       const response = await axios.post(
@@ -725,6 +740,14 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
       console.error(`❌ LLM processing failed (${statusCode}):`, apiMessage);
       failProgress(id, 'process', apiMessage);
       throw new HttpException(`خطا در پردازش LLM (${statusCode}): ${apiMessage}`, 502);
+    }
+    } else {
+      // No analysis/translation requested — just complete
+      completeProgress(id, 'process');
+      page.last_processed_at = new Date();
+      page.last_processed_timeframe = timeRange || 'all';
+      const saved = await this.pageRepository.save(page);
+      return { page: saved, status: 'processed', message: 'پردازش (بدون تحلیل AI) انجام شد', transcription: transcriptionStats };
     }
   }
 
