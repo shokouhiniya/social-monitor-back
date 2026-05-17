@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Cron } from '@nestjs/schedule';
 import axios from 'axios';
 import { PageService } from '../page/page.service';
 import { PostService } from '../post/post.service';
@@ -23,30 +22,39 @@ export class AnalyticsService {
     private alertRepository: Repository<StrategicAlert>,
   ) {}
 
-  async getMacroDashboard() {
-    const [categories, clusters, countries, topInfluencers, trendingKeywords, topicGravity] =
+  async getMacroDashboard(scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
+    const [categories, clusters, countries, languages, religions, topInfluencers, trendingKeywords, topicGravity] =
       await Promise.all([
-        this.pageService.getCategoryDistribution(),
-        this.pageService.getClusterDistribution(),
-        this.pageService.getCountryDistribution(),
-        this.pageService.getTopInfluencers(10),
-        this.postService.getTrendingKeywords(30),
-        this.postService.getTopicGravity(30),
+        this.pageService.getCategoryDistribution(pageIds),
+        this.pageService.getClusterDistribution(pageIds),
+        this.pageService.getCountryDistribution(pageIds),
+        this.pageService.getLanguageDistribution(pageIds),
+        this.pageService.getReligionDistribution(pageIds),
+        this.pageService.getTopInfluencers(10, pageIds),
+        this.postService.getTrendingKeywords(30, pageIds),
+        this.postService.getTopicGravity(30, pageIds),
       ]);
 
     return {
       identity_distribution: categories,
       cluster_distribution: clusters,
       geo_distribution: countries,
+      language_distribution: languages,
+      religion_distribution: religions,
       top_influencers: topInfluencers,
       trending_keywords: trendingKeywords,
       topic_gravity: topicGravity,
+      scope: scope || 'all',
+      cluster_id: clusterId || null,
+      pages_in_scope: pageIds?.length ?? null,
     };
   }
 
-  async getAlignmentIndex() {
-    // Measures how much the 2000 pages are saying the same thing
-    const keywords = await this.postService.getTrendingKeywords(30);
+  async getAlignmentIndex(scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
+    // Measures how much the pages in scope are saying the same thing
+    const keywords = await this.postService.getTrendingKeywords(30, pageIds);
     const total = keywords.reduce((sum, k) => sum + k.count, 0);
     const top5 = keywords.slice(0, 5).reduce((sum, k) => sum + k.count, 0);
     const alignment = total > 0 ? top5 / total : 0;
@@ -57,11 +65,29 @@ export class AnalyticsService {
       description: alignment > 0.5
         ? 'شبکه در حال هم‌گرایی بالا است'
         : 'شبکه پراکنده و متنوع عمل می‌کند',
+      scope: scope || 'all',
     };
   }
 
-  async getSilenceRadar(globalTopics: string[]) {
-    // If no topics provided, load defaults from settings
+  async getSilenceRadar(globalTopics: string[], scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
+    return this.computeSilenceRadar(globalTopics, pageIds);
+  }
+
+  /**
+   * Per-page silence radar: which globally hot topics is this single page covering vs. silent on?
+   * Uses the page's keywords + extracted topics from posts within the time window.
+   */
+  async getPageSilenceRadar(pageId: number, globalTopics: string[], days = 30) {
+    return this.computeSilenceRadar(globalTopics, [pageId], days, true);
+  }
+
+  private async computeSilenceRadar(
+    globalTopics: string[],
+    pageIds?: number[],
+    days = 7,
+    includePageMeta = false,
+  ) {
     if (!globalTopics || globalTopics.length === 0) {
       const topicsStr = await this.settingsService.get('silence_radar_topics');
       globalTopics = topicsStr
@@ -74,14 +100,22 @@ export class AnalyticsService {
 
     // Get topics from posts AND keywords (both sources)
     const [ourTopics, ourKeywords] = await Promise.all([
-      this.postService.getTopicGravity(7),
-      this.postService.getTrendingKeywords(7),
+      this.postService.getTopicGravity(days, pageIds),
+      this.postService.getTrendingKeywords(days, pageIds),
     ]);
 
     // Combine all network content into a single searchable set
     const networkTerms = new Set<string>();
     for (const t of ourTopics) networkTerms.add(t.topic.toLowerCase());
     for (const k of ourKeywords) networkTerms.add(k.keyword.toLowerCase());
+
+    // Also include the page's profile-level keywords/cluster/category for richer matching
+    if (includePageMeta && pageIds && pageIds.length === 1) {
+      const page = await this.pageService.findById(pageIds[0]);
+      for (const kw of page.keywords || []) networkTerms.add(String(kw).toLowerCase());
+      if (page.cluster) networkTerms.add(String(page.cluster).toLowerCase());
+      if (page.category) networkTerms.add(String(page.category).toLowerCase());
+    }
 
     // Fuzzy match: a global topic is "covered" if any network term contains it or vice versa
     const covered: string[] = [];
@@ -104,6 +138,8 @@ export class AnalyticsService {
       covered_topics: covered,
       silence_gaps: gaps,
       coverage_rate: Math.round((covered.length / globalTopics.length) * 100),
+      window_days: days,
+      network_term_count: networkTerms.size,
     };
   }
 
@@ -184,40 +220,45 @@ export class AnalyticsService {
     };
   }
 
-  async getReactionVelocity(days = 7) {
-    // Measures how fast the network reacts to breaking news
-    return await this.postService.getReactionVelocity(days);
+  async getReactionVelocity(days = 7, scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
+    return await this.postService.getReactionVelocity(days, pageIds);
   }
 
-  async getNetworkPulse() {
-    return await this.postService.getNetworkPulse();
+  async getNetworkPulse(scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
+    return await this.postService.getNetworkPulse(pageIds);
   }
 
-  async getNetworkPulseWeekly() {
-    return await this.postService.getNetworkPulseWeekly();
+  async getNetworkPulseWeekly(scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
+    return await this.postService.getNetworkPulseWeekly(pageIds);
   }
 
-  async getGhostPages() {
-    return await this.pageService.getGhostPages();
+  async getGhostPages(scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
+    return await this.pageService.getGhostPages(pageIds);
   }
 
-  async getActivityIndex() {
-    return await this.postService.getActivityIndex();
+  async getActivityIndex(scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
+    return await this.postService.getActivityIndex(pageIds);
   }
 
-  async getPeriodicReport(hours = 6) {
+  async getPeriodicReport(hours = 6, scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
     const now = new Date();
     const periodStart = new Date(now.getTime() - hours * 60 * 60 * 1000);
     // Use days for the data queries (minimum 1 day to avoid empty results for short windows)
     const queryDays = Math.max(1, Math.ceil(hours / 24));
 
     const [keywords, topics, sentiment, reshares, categories, ghostPages] = await Promise.all([
-      this.postService.getTrendingKeywords(queryDays),
-      this.postService.getTopicGravity(queryDays),
-      this.postService.getSentimentTimeline(undefined, queryDays),
-      this.postService.getReshareTree(queryDays),
-      this.pageService.getCategoryDistribution(),
-      this.pageService.getGhostPages(),
+      this.postService.getTrendingKeywords(queryDays, pageIds),
+      this.postService.getTopicGravity(queryDays, pageIds),
+      this.postService.getSentimentTimeline(undefined, queryDays, undefined, pageIds),
+      this.postService.getReshareTree(queryDays, pageIds),
+      this.pageService.getCategoryDistribution(pageIds),
+      this.pageService.getGhostPages(pageIds),
     ]);
 
     const topKeywords = keywords.slice(0, 8).map((k) => k.keyword);
@@ -277,20 +318,28 @@ export class AnalyticsService {
     };
   }
 
-  async getLatestPosts(limit = 10) {
-    const result = await this.postService.findAll({ page: 1, limit });
+  async getLatestPosts(limit = 10, scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
+    if (pageIds && pageIds.length === 0) return [];
+    const result = await this.postService.findAll({
+      page: 1,
+      limit,
+      ...(pageIds ? { page_ids: pageIds } : {}),
+    } as any);
     return result.data;
   }
 
-  async getHighImpactPosts(limit = 5) {
-    return await this.postService.getHighImpactPosts(limit);
+  async getHighImpactPosts(limit = 5, scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
+    return await this.postService.getHighImpactPosts(limit, pageIds);
   }
 
-  async getNarrativeHealth() {
+  async getNarrativeHealth(scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
     const [keywords, topics, alignment] = await Promise.all([
-      this.postService.getTrendingKeywords(7),
-      this.postService.getTopicGravity(7),
-      this.getAlignmentIndex(),
+      this.postService.getTrendingKeywords(7, pageIds),
+      this.postService.getTopicGravity(7, pageIds),
+      this.getAlignmentIndex(scope, clusterId),
     ]);
 
     // Target narrative keywords from settings
@@ -345,21 +394,33 @@ export class AnalyticsService {
     };
   }
 
-  async getCrisisCorridor() {
-    const ghostPages = await this.pageService.getGhostPages();
-    // Also get pages with very negative sentiment
-    const allPages = await this.pageService.findAll({ page: 1, limit: 100 });
-    const crisisPages = allPages.data.filter(
+  async getCrisisCorridor(scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
+    if (pageIds && pageIds.length === 0) return [];
+    const ghostPages = await this.pageService.getGhostPages(pageIds);
+    // Also get pages with very low credibility / consistency from the scope
+    const allPages = await this.pageService.findAll({ page: 1, limit: 100 } as any);
+    let pages = allPages.data;
+    if (pageIds && pageIds.length > 0) {
+      const set = new Set(pageIds);
+      pages = pages.filter((p: any) => set.has(p.id));
+    }
+    const crisisPages = pages.filter(
       (p) => !p.is_active || p.consistency_rate < 2 || p.credibility_score < 2,
     );
-    return crisisPages.slice(0, 10);
+    // Merge ghost pages too (de-dup by id)
+    const merged = new Map<number, any>();
+    for (const p of crisisPages) merged.set(p.id, p);
+    for (const p of ghostPages) if (!merged.has(p.id)) merged.set(p.id, p);
+    return Array.from(merged.values()).slice(0, 10);
   }
 
-  async getAiSynthesizer() {
+  async getAiSynthesizer(scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
     const [keywords, topics, sentiment] = await Promise.all([
-      this.postService.getTrendingKeywords(1),
-      this.postService.getTopicGravity(1),
-      this.postService.getSentimentTimeline(undefined, 1),
+      this.postService.getTrendingKeywords(1, pageIds),
+      this.postService.getTopicGravity(1, pageIds),
+      this.postService.getSentimentTimeline(undefined, 1, undefined, pageIds),
     ]);
 
     const topTopic = topics[0]?.topic || 'بدون موضوع خاص';
@@ -375,15 +436,28 @@ export class AnalyticsService {
     const kwStr = keywords.slice(0, 5).map((k) => k.keyword).join('، ');
     let headline: string;
     try {
-      const [apiKey, model] = await Promise.all([
+      const [apiKey, model, basePrompt, extraPrompt] = await Promise.all([
         this.settingsService.get('openrouter_key'),
         this.settingsService.get('llm_model'),
+        this.settingsService.get('prompt_ai_synthesizer'),
+        this.settingsService.get('prompt_ai_synthesizer_extra'),
       ]);
+      const promptTemplate = basePrompt || `بر اساس اطلاعات زیر، یک جمله کوتاه و تاثیرگذار (حداکثر ۳۰ کلمه) به فارسی بنویس که خلاصه وضعیت امروز شبکه باشد. فقط یک جمله برگردان، بدون هیچ توضیح اضافه.
+
+موضوعات داغ: {TOPICS}
+کلمات کلیدی: {KEYWORDS}
+لحن غالب: {MOOD}
+امتیاز احساسات: {SENTIMENT_SCORE}`;
+      const finalPrompt = promptTemplate
+        .replace('{TOPICS}', topicsStr)
+        .replace('{KEYWORDS}', kwStr)
+        .replace('{MOOD}', mood)
+        .replace('{SENTIMENT_SCORE}', avgSentiment.toFixed(2)) + (extraPrompt ? `\n\n${extraPrompt}` : '');
       const response = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
           model: model || 'google/gemini-2.5-pro',
-          messages: [{ role: 'user', content: `بر اساس اطلاعات زیر، یک جمله کوتاه و تاثیرگذار (حداکثر ۳۰ کلمه) به فارسی بنویس که خلاصه وضعیت امروز شبکه باشد. فقط یک جمله برگردان، بدون هیچ توضیح اضافه.\n\nموضوعات داغ: ${topicsStr}\nکلمات کلیدی: ${kwStr}\nلحن غالب: ${mood}\nامتیاز احساسات: ${avgSentiment.toFixed(2)}` }],
+          messages: [{ role: 'user', content: finalPrompt }],
           max_tokens: 500,
           temperature: 0.5,
         },
@@ -411,16 +485,19 @@ export class AnalyticsService {
     };
   }
 
-  async getKeywordVelocity() {
-    return await this.postService.getKeywordVelocity();
+  async getKeywordVelocity(scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
+    return await this.postService.getKeywordVelocity(pageIds);
   }
 
-  async getSentimentInfluenceMatrix() {
-    return await this.postService.getSentimentInfluenceMatrix();
+  async getSentimentInfluenceMatrix(scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
+    return await this.postService.getSentimentInfluenceMatrix(pageIds);
   }
 
-  async getNarrativeBattle() {
-    return await this.postService.getNarrativeBattle();
+  async getNarrativeBattle(scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
+    return await this.postService.getNarrativeBattle(pageIds);
   }
 
   private async callLLM(prompt: string): Promise<string> {
@@ -449,12 +526,8 @@ export class AnalyticsService {
       || '';
   }
 
-  // Cron: Run at 00:00, 06:00, 12:00, 18:00 Tehran time (UTC+3:30 → 20:30, 02:30, 08:30, 14:30 UTC)
-  @Cron('30 20,2,8,14 * * *')
-  async handleScheduledRefresh() {
-    this.logger.log('Scheduled refresh triggered');
-    await this.refreshDashboard();
-  }
+  // Manual refresh only — no automatic cron
+  // Use the 'بروزرسانی' button in the dashboard to trigger refresh manually.
 
   async refreshDashboard() {
     try {
@@ -605,6 +678,81 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
       return { status: 'success', ...report, generated_at: new Date().toISOString() };
     } catch (error) {
       return { status: 'error', message: error.message };
+    }
+  }
+
+  /**
+   * Actors Scene Report — produces a 300-400 word narrative summary of the
+   * actor network (pages currently being monitored), focusing on profile
+   * composition, identity makeup, geographic spread, and influence ranking.
+   */
+  async getActorsSceneReport(scope?: string, clusterId?: number) {
+    const pageIds = await this.pageService.resolveScopePageIds(scope, clusterId);
+    const [categories, clusters, countries, languages, religions, topInfluencers, alignmentInfo] =
+      await Promise.all([
+        this.pageService.getCategoryDistribution(pageIds),
+        this.pageService.getClusterDistribution(pageIds),
+        this.pageService.getCountryDistribution(pageIds),
+        this.pageService.getLanguageDistribution(pageIds),
+        this.pageService.getReligionDistribution(pageIds),
+        this.pageService.getTopInfluencers(10, pageIds),
+        this.getAlignmentIndex(scope, clusterId),
+      ]);
+
+    const totalPages = categories.reduce((s: number, c: any) => s + Number(c.count), 0);
+
+    const fmtList = (arr: any[], key: string, max = 5) =>
+      arr
+        .filter((x) => x[key])
+        .slice(0, max)
+        .map((x) => `${x[key]} (${x.count})`)
+        .join('، ');
+
+    const topInfluencerNames = topInfluencers
+      .slice(0, 5)
+      .map((p: any) => `@${p.username} (نفوذ ${(p.influence_score || 0).toFixed(1)})`)
+      .join('، ');
+
+    const prompt = `تو یک تحلیل‌گر ارشد رسانه‌ای هستی. بر اساس داده‌های زیر، یک گزارش روایی ۳۰۰ تا ۴۰۰ کلمه‌ای فارسی درباره «وضعیت صحنه کنشگران» این شبکه بنویس. متن باید پیوسته و خوانا باشد، نه بولت.
+
+داده‌های شبکه (${totalPages} پیج):
+- توزیع دسته موضوعی: ${fmtList(categories, 'category', 6) || 'نامشخص'}
+- توزیع خوشه معنایی: ${fmtList(clusters, 'cluster', 5) || 'نامشخص'}
+- توزیع جغرافیایی: ${fmtList(countries, 'country', 5) || 'نامشخص'}
+- توزیع زبانی: ${fmtList(languages, 'language', 5) || 'نامشخص'}
+- توزیع دینی/مذهبی: ${fmtList(religions, 'religion', 5) || 'نامشخص'}
+- پیج‌های پرنفوذ: ${topInfluencerNames || 'نامشخص'}
+- شاخص هم‌گرایی: ${alignmentInfo.alignment_index}٪ — ${alignmentInfo.description}
+
+گزارش باید شامل این سرفصل‌ها (به‌صورت پاراگراف‌بندی پیوسته، نه تیتربندی):
+۱) ترکیب کلی صحنه (دسته‌ها، خوشه‌ها، تنوع موضوعی)
+۲) جغرافیا و زبان غالب
+۳) ترکیب هویتی و دینی
+۴) چهره‌های شاخص و رهبران فکری
+۵) ارزیابی هم‌گرایی و توصیه راهبردی
+
+خروجی را به فرمت JSON برگردان:
+{
+  "report": "متن گزارش (۳۰۰ تا ۴۰۰ کلمه)",
+  "headline": "تیتر کوتاه و گویا (حداکثر ۱۵ کلمه)"
+}`;
+
+    try {
+      const content = await this.callLLM(prompt);
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        return { status: 'error', message: 'LLM did not return valid JSON', report: '', headline: '' };
+      }
+      const result = JSON.parse(jsonMatch[0]);
+      return {
+        status: 'success',
+        ...result,
+        total_pages: totalPages,
+        alignment_index: alignmentInfo.alignment_index,
+        generated_at: new Date().toISOString(),
+      };
+    } catch (error) {
+      return { status: 'error', message: error.message, report: '', headline: '' };
     }
   }
 }

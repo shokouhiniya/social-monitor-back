@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as FormData from 'form-data';
 import { Post } from '../post/post.entity';
+import { SettingsService } from '../settings/settings.service';
 
 const SONIOX_API_BASE = 'https://api.soniox.com';
 
@@ -19,10 +20,12 @@ export class TranscriptionService {
   constructor(
     @InjectRepository(Post)
     private postRepository: Repository<Post>,
+    private settingsService: SettingsService,
   ) {}
 
-  private get apiKey(): string {
-    return process.env.SONIOX_API_KEY || '';
+  private async getApiKey(): Promise<string> {
+    const fromSettings = await this.settingsService.get('soniox_key');
+    return fromSettings || process.env.SONIOX_API_KEY || '';
   }
 
   /**
@@ -34,7 +37,8 @@ export class TranscriptionService {
   ): Promise<any> {
     const { method = 'GET', body, headers = {}, isFormData = false } = options;
 
-    if (!this.apiKey) {
+    const apiKey = await this.getApiKey();
+    if (!apiKey) {
       throw new Error('SONIOX_API_KEY is not configured');
     }
 
@@ -42,7 +46,7 @@ export class TranscriptionService {
       method,
       url: `${SONIOX_API_BASE}${endpoint}`,
       headers: {
-        Authorization: `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         ...headers,
       },
       timeout: 30000,
@@ -66,12 +70,13 @@ export class TranscriptionService {
    * Upload a local file to Soniox and return the file ID.
    */
   private async uploadFile(filePath: string): Promise<string> {
+    const apiKey = await this.getApiKey();
     const form = new FormData();
     form.append('file', fs.createReadStream(filePath));
 
     const response = await axios.post(`${SONIOX_API_BASE}/v1/files`, form, {
       headers: {
-        Authorization: `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         ...form.getHeaders(),
       },
       timeout: 120000, // 2 min for large video uploads
@@ -282,7 +287,8 @@ export class TranscriptionService {
    * Returns count of newly transcribed posts.
    */
   async transcribePageVideos(pageId: number): Promise<{ transcribed: number; skipped: number; failed: number }> {
-    if (!this.apiKey) {
+    const apiKey = await this.getApiKey();
+    if (!apiKey) {
       this.logger.warn('SONIOX_API_KEY not configured — skipping transcription');
       return { transcribed: 0, skipped: 0, failed: 0 };
     }

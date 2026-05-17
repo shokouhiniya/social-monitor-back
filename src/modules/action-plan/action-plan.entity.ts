@@ -5,21 +5,37 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   ManyToOne,
+  OneToMany,
   JoinColumn,
 } from 'typeorm';
 import { Page } from '../page/page.entity';
+import { StrategicAlert } from '../strategic-alert/strategic-alert.entity';
+import { Interaction } from '../interaction/interaction.entity';
 
 @Entity('action_plans')
 export class ActionPlan {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column()
+  @Column({ nullable: true })
   page_id: number;
 
-  @ManyToOne(() => Page)
+  @ManyToOne(() => Page, { nullable: true })
   @JoinColumn({ name: 'page_id' })
   page: Page;
+
+  @Column({ type: 'int', nullable: true })
+  cluster_id: number;
+
+  @Column({ nullable: true })
+  alert_id: number;
+
+  @ManyToOne(() => StrategicAlert, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'alert_id' })
+  alert: StrategicAlert;
+
+  @OneToMany(() => Interaction, (interaction) => interaction.action_plan)
+  interactions: Interaction[];
 
   @Column()
   title: string;
@@ -47,6 +63,18 @@ export class ActionPlan {
 
   @Column({ nullable: true })
   assigned_to: string;
+
+  @Column({ type: 'jsonb', nullable: true })
+  contact_info: {
+    phone?: string;
+    email?: string;
+    telegram?: string;
+    notes?: string;
+    [key: string]: any;
+  } | null;
+
+  @Column({ type: 'jsonb', nullable: true })
+  recommended_pages: number[] | null; // suggested page IDs to engage in this operation
 
   @Column({ default: false })
   is_ai_generated: boolean;

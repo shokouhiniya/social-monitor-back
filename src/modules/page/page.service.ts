@@ -1,6 +1,6 @@
 import { HttpException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like } from 'typeorm';
+import { Repository } from 'typeorm';
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -8,10 +8,12 @@ import { Page } from './page.entity';
 import { Post } from '../post/post.entity';
 import { FieldReport } from '../field-report/field-report.entity';
 import { ActionPlan } from '../action-plan/action-plan.entity';
+import { Cluster } from '../cluster/cluster.entity';
 import { CreatePageDto, UpdatePageDto, PageQueryDto } from './page.dto';
 import { SettingsService } from '../settings/settings.service';
 import { TranscriptionService } from '../transcription/transcription.service';
 import { startProgress, updateProgress, completeProgress, failProgress } from './page-progress';
+import { TOPICAL_CLUSTERS, IDENTITY_CATEGORIES, GENDERS, AGE_RANGES, RELIGIONS } from './page.constants';
 
 @Injectable()
 export class PageService {
@@ -24,6 +26,8 @@ export class PageService {
     private fieldReportRepository: Repository<FieldReport>,
     @InjectRepository(ActionPlan)
     private actionPlanRepository: Repository<ActionPlan>,
+    @InjectRepository(Cluster)
+    private clusterRepository: Repository<Cluster>,
     private readonly settingsService: SettingsService,
     private readonly transcriptionService: TranscriptionService,
   ) {}
@@ -101,20 +105,21 @@ export class PageService {
       const ext = path.extname(filePath).toLowerCase();
       const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
 
-      const [apiKey, model] = await Promise.all([
+      const [apiKey, fastModel, ocrPrompt] = await Promise.all([
         this.settingsService.get('openrouter_key'),
-        this.settingsService.get('llm_model'),
+        this.settingsService.get('llm_model_fast'),
+        this.settingsService.get('prompt_ocr'),
       ]);
 
       const response = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
           // Use Flash for OCR — faster, no reasoning overhead, excellent at text extraction
-          model: 'google/gemini-2.0-flash-001',
+          model: fastModel || 'google/gemini-2.0-flash-001',
           messages: [{
             role: 'user',
             content: [
-              { type: 'text', text: 'Extract ALL visible text from this image exactly as written. Include every line of text overlays, captions, watermarks, subtitles, and any text in screenshots. Preserve line breaks. Return ONLY the extracted text, nothing else. If there is no text in the image, return exactly: NO_TEXT' },
+              { type: 'text', text: ocrPrompt || 'Extract ALL visible text from this image exactly as written. Include every line of text overlays, captions, watermarks, subtitles, and any text in screenshots. Preserve line breaks. Return ONLY the extracted text, nothing else. If there is no text in the image, return exactly: NO_TEXT' },
               { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
             ],
           }],
@@ -146,14 +151,24 @@ export class PageService {
 
   async findAll(query: PageQueryDto) {
     const { category, platform, cluster, country, search, page = 1, limit = 20 } = query;
+    const identityCategory = (query as any).identity_category;
     const segment = (query as any).segment;
+    const clusterId = (query as any).cluster_id;
+    const isRepresentative = (query as any).is_representative;
 
     const qb = this.pageRepository.createQueryBuilder('page');
 
     if (category) qb.andWhere('page.category = :category', { category });
+    if (identityCategory) qb.andWhere('page.identity_category = :identityCategory', { identityCategory });
     if (platform) qb.andWhere('page.platform = :platform', { platform });
     if (cluster) qb.andWhere('page.cluster = :cluster', { cluster });
     if (country) qb.andWhere('page.country = :country', { country });
+    if (clusterId !== undefined) qb.andWhere('page.cluster_id = :clusterId', { clusterId: Number(clusterId) });
+    if (isRepresentative !== undefined) {
+      qb.andWhere('page.is_representative = :isRepresentative', {
+        isRepresentative: isRepresentative === true || isRepresentative === 'true',
+      });
+    }
     if (search) qb.andWhere('page.name ILIKE :search', { search: `%${search}%` });
 
     // Segment filters
@@ -226,9 +241,10 @@ export class PageService {
     if (!page) throw new HttpException('Page not found', 404);
     if (!page.username) throw new HttpException('Username is required for fetching', 400);
 
+    const rapidApiKey = (await this.settingsService.get('rapidapi_key')) || process.env.RAPIDAPI_KEY || '';
     const ig120Headers = {
       'Content-Type': 'application/json',
-      'x-rapidapi-key': process.env.RAPIDAPI_KEY,
+      'x-rapidapi-key': rapidApiKey,
       'x-rapidapi-host': 'instagram120.p.rapidapi.com',
     };
 
@@ -448,6 +464,10 @@ export class PageService {
       }
 
       completeProgress(id, 'fetch');
+
+      // Recompute engagement metrics from all posts after fetch.
+      await this.recomputeEngagementMetrics(page.id);
+
       return {
         page: saved,
         status: 'fetched',
@@ -579,12 +599,34 @@ export class PageService {
     }).join('\n');
 
     // Load system prompt, extra instructions, model and API key from settings
-    const [systemPrompt, extraInstructions, apiKey, model] = await Promise.all([
+    const [systemPrompt, extraInstructions, apiKey, model, alignmentCriteria] = await Promise.all([
       this.settingsService.get('prompt_page_analysis'),
       this.settingsService.get('prompt_page_analysis_extra'),
       this.settingsService.get('openrouter_key'),
       this.settingsService.get('llm_model'),
+      this.settingsService.get('alignment_criteria'),
     ]);
+
+    const alignmentList = alignmentCriteria
+      ? alignmentCriteria.split(/\n/).map((l) => l.trim()).filter(Boolean).map((l) => `- ${l}`).join('\n')
+      : '- مخالفت با آمریکا و اسرائیل\n- حمایت از مسئله فلسطین\n- حمایت از لبنان و حزب‌الله\n- حمایت از جمهوری اسلامی ایران';
+
+    // Load existing managed clusters so the LLM can match the page to one of them
+    const managedClusters = await this.clusterRepository.find({ order: { id: 'ASC' } });
+    const clustersList = managedClusters.length > 0
+      ? managedClusters.map((c) => `${c.id} = ${c.name}${c.description ? ` — ${c.description}` : ''}`).join('\n')
+      : '(هیچ خوشه‌ای تعریف نشده — مقدار cluster_id را null بگذار)';
+
+    // Build the topical/identity reference list so the LLM uses ONLY allowed keys
+    const topicalList = Object.entries(TOPICAL_CLUSTERS)
+      .map(([k, v]) => `${k} = ${v.label} — ${v.description}`)
+      .join('\n');
+    const identityList = Object.entries(IDENTITY_CATEGORIES)
+      .map(([k, v]) => `${k} = ${v.label} — ${v.description}`)
+      .join('\n');
+    const genderKeys = Object.keys(GENDERS).join(', ');
+    const ageKeys = Object.keys(AGE_RANGES).join(', ');
+    const religionKeys = Object.keys(RELIGIONS).join(', ');
 
     const prompt = `${systemPrompt || 'تو یک تحلیل‌گر رسانه‌ای هوشمند هستی. اطلاعات زیر مربوط به یک پیج اینستاگرامی است. لطفاً تحلیل کامل ارائه بده.'}
 
@@ -595,7 +637,12 @@ export class PageService {
 - بیو: ${page.bio || 'ندارد'}
 - فالوور: ${page.followers_count}
 - فالووینگ: ${page.following_count}
-- دسته‌بندی فعلی: ${page.category || 'نامشخص'}
+- میانگین لایک ۱۰ پست انتهایی: ${page.avg_likes?.toFixed(0) || 'محاسبه نشده'}
+- میانگین کامنت ۱۰ پست انتهایی: ${page.avg_comments?.toFixed(0) || 'محاسبه نشده'}
+- نرخ تعامل: ${page.engagement_rate ? page.engagement_rate.toFixed(2) + '%' : 'محاسبه نشده'}
+- تعداد کل پست: ${page.posts_count || 0}
+- دسته‌بندی موضوعی فعلی: ${page.category || 'نامشخص'}
+- دسته‌بندی هویتی فعلی: ${page.identity_category || 'نامشخص'}
 - کشور: ${page.country || 'نامشخص'}
 
 آخرین پست‌ها:
@@ -610,13 +657,45 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
 
 ⚠️ مهم - تحلیل جامع: تمام منابع متنی یک پست (کپشن، رونوشت صوتی، متن روی تصویر، توضیح دستی) باید در تحلیل احساسات، موضوعات و کلمات کلیدی آن پست لحاظ شوند. هر منبع به یک اندازه مهم است. توضیح دستی (با برچسب [توضیح دستی]) توسط تحلیل‌گر انسانی نوشته شده و شامل اطلاعاتی است که فقط با دیدن ویدیو یا تفسیر تصویر قابل درک است.
 
+📚 خوشه‌های موضوعی مجاز برای فیلد "category" (دقیقاً یکی از این کلیدها را انتخاب کن — اگر هیچ‌کدام دقیق نیست نزدیک‌ترین را بزن):
+${topicalList}
+
+🆔 دسته‌بندی هویتی مجاز برای فیلد "identity_category" (کیستی صاحب صفحه — دقیقاً یکی از این کلیدها):
+${identityList}
+
+⛪ دین/مذهب مجاز برای فیلد "religion" (یکی از: ${religionKeys}). اگر مشخص نیست unknown بگذار.
+
+👤 جنسیت مجاز برای فیلد "gender" (یکی از: ${genderKeys}). برای تیم‌ها/برندها mixed و اگر نامعلوم unknown.
+
+🎂 رده‌سنی مجاز برای فیلد "age_range" (یکی از: ${ageKeys}). اگر تعیین دقیق ممکن نیست unknown.
+
+🌍 قانون «زبان تولیدی»: زبان غالب پست‌ها را در فیلد "content_language" بنویس (مثل: فارسی، عربی، انگلیسی...). اگر هیچ زبانی بیش از ۸۰٪ محتوا نیست، مقدار "چندزبانه" را برگردان.
+
+🚩 شاخص همسویی (alignment_score از ۰ تا ۱۰): چقدر این پیج با محور زیر هم‌راستاست؟
+${alignmentList}
+۰ یعنی کاملاً ضد، ۵ یعنی خنثی، ۱۰ یعنی کاملاً هم‌راستا.
+
+🤝 شاخص همراهی (affinity_score از ۰ تا ۱۰): مخاطب چقدر با صفحه ارتباط واقعی دارد؟ بر اساس وفاداری مخاطب، احساس تعلق، عمق کامنت‌ها، نرخ مشارکت فعال و ارتباط انسانی ادمین. ۰ یعنی فقط بیننده، ۱۰ یعنی کامیونیتی واقعی.
+
+🗂️ تخصیص خوشه (cluster_id): این پیج باید به یکی از خوشه‌های مدیریتی زیر اختصاص یابد. شناسه (id) خوشه‌ای که بیشترین تطابق را با موضوع و هویت پیج دارد، در فیلد "cluster_id" قرار بده. اگر هیچ خوشه‌ای کاملاً مناسب نیست، null بگذار.
+${clustersList}
+
 لطفاً خروجی را دقیقاً به فرمت JSON زیر برگردان (بدون هیچ متن اضافه):
 {
-  "category": "دسته‌بندی پیشنهادی (news/activist/celebrity/lifestyle/economy/local_news/politician/documentary/religious/art/student/health/technology/culture/sports/analyst)",
-  "cluster": "نام خوشه معنایی (مثلاً: رسانه مقاومت، لایف‌استایل، رسانه بین‌المللی)",
+  "category": "یکی از کلیدهای خوشه موضوعی مجاز",
+  "identity_category": "یکی از کلیدهای دسته هویتی مجاز",
+  "cluster": "نام خوشه معنایی کوتاه (مثلاً: رسانه مقاومت، لایف‌استایل، رسانه بین‌المللی)",
+  "cluster_id": عدد id یکی از خوشه‌های مدیریتی بالا یا null,
   "credibility_score": عدد از 0 تا 10,
   "influence_score": عدد از 0 تا 10,
   "consistency_rate": عدد از 0 تا 10,
+  "affinity_score": عدد از 0 تا 10,
+  "alignment_score": عدد از 0 تا 10,
+  "religion": "یکی از کلیدهای مذهب مجاز",
+  "gender": "یکی از کلیدهای جنسیت مجاز",
+  "age_range": "یکی از کلیدهای رده سنی مجاز",
+  "nationality": "ملیت صاحب پیج به فارسی (مثلاً: ایرانی، عربی، ترک، آمریکایی...)",
+  "content_language": "زبان غالب پست‌ها (یا چندزبانه)",
   "persona_radar": {
     "aggressive_defensive": عدد 0 تا 100,
     "producer_resharer": عدد 0 تا 100,
@@ -676,19 +755,38 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
       updateProgress(id, 'process', 'ذخیره نتایج تحلیل...', 80);
       const updateData: any = {};
       if (analysis.category) { updateData.category = analysis.category; updateData.category_source = 'ai'; }
+      if (analysis.identity_category) { updateData.identity_category = analysis.identity_category; updateData.identity_category_source = 'ai'; }
       if (analysis.cluster) updateData.cluster = analysis.cluster;
+      // Validate cluster_id from LLM against existing clusters
+      if (analysis.cluster_id !== undefined && analysis.cluster_id !== null) {
+        const validClusterId = managedClusters.find((c) => c.id === Number(analysis.cluster_id))?.id;
+        if (validClusterId) {
+          updateData.cluster_id = validClusterId;
+        }
+      }
       if (analysis.credibility_score !== undefined) updateData.credibility_score = analysis.credibility_score;
       if (analysis.influence_score !== undefined) updateData.influence_score = analysis.influence_score;
       if (analysis.consistency_rate !== undefined) updateData.consistency_rate = analysis.consistency_rate;
+      if (analysis.affinity_score !== undefined) updateData.affinity_score = analysis.affinity_score;
+      if (analysis.alignment_score !== undefined) updateData.alignment_score = analysis.alignment_score;
       if (analysis.persona_radar) updateData.persona_radar = analysis.persona_radar;
       if (analysis.pain_points) updateData.pain_points = analysis.pain_points;
       if (analysis.keywords) updateData.keywords = analysis.keywords;
       if (analysis.language) updateData.language = analysis.language;
+      if (analysis.content_language) updateData.content_language = analysis.content_language;
+      if (analysis.religion) updateData.religion = analysis.religion;
+      if (analysis.gender) updateData.gender = analysis.gender;
+      if (analysis.age_range) updateData.age_range = analysis.age_range;
+      if (analysis.nationality) updateData.nationality = analysis.nationality;
 
       Object.assign(page, updateData);
       page.last_processed_at = new Date();
       page.last_processed_timeframe = timeRange || 'all';
       const saved = await this.pageRepository.save(page);
+
+      // Refresh engagement metrics in case new posts were processed
+      const fresh = await this.recomputeEngagementMetrics(page.id);
+      Object.assign(saved, fresh);
 
       // Update posts with sentiment analysis
       if (analysis.posts_analysis && Array.isArray(analysis.posts_analysis)) {
@@ -757,8 +855,219 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
     if (dto.category && dto.category !== page.category) {
       (dto as any).category_source = 'manual';
     }
+    if (dto.identity_category && dto.identity_category !== page.identity_category) {
+      (dto as any).identity_category_source = 'manual';
+    }
     Object.assign(page, dto);
     return await this.pageRepository.save(page);
+  }
+
+  /**
+   * Recompute engagement metrics from the page's posts:
+   * - posts_count: total non-story posts
+   * - avg_likes: mean of last 10 (image/video/reel/carousel) posts
+   * - avg_comments: same
+   * - engagement_rate: ((avg_likes + avg_comments) / followers) × 100
+   *
+   * Stories are excluded from likes/comments averages because they don't have those metrics.
+   */
+  async recomputeEngagementMetrics(pageId: number): Promise<Partial<Page>> {
+    const page = await this.pageRepository.findOne({ where: { id: pageId } });
+    if (!page) return {};
+
+    const allPosts = await this.postRepository.find({
+      where: { page_id: pageId },
+      order: { published_at: 'DESC' },
+    });
+
+    const nonStory = allPosts.filter((p) => p.post_type !== 'story');
+    const lastTen = nonStory.slice(0, 10);
+
+    const sum = (arr: number[]) => arr.reduce((s, n) => s + (n || 0), 0);
+    const avg = (arr: number[]) => (arr.length === 0 ? 0 : sum(arr) / arr.length);
+
+    const avgLikes = avg(lastTen.map((p) => p.likes_count));
+    const avgComments = avg(lastTen.map((p) => p.comments_count));
+    const followers = page.followers_count || 0;
+    const engagementRate = followers > 0 ? ((avgLikes + avgComments) / followers) * 100 : 0;
+
+    page.avg_likes = Math.round(avgLikes * 100) / 100;
+    page.avg_comments = Math.round(avgComments * 100) / 100;
+    page.engagement_rate = Math.round(engagementRate * 1000) / 1000;
+    page.posts_count = nonStory.length;
+
+    await this.pageRepository.save(page);
+    return {
+      avg_likes: page.avg_likes,
+      avg_comments: page.avg_comments,
+      engagement_rate: page.engagement_rate,
+      posts_count: page.posts_count,
+    };
+  }
+
+  /**
+   * Generate the 360° insight panel content for a page.
+   * Produces 5 fields in one LLM call:
+   *  1. narrative_description (200-300 word free description)
+   *  2. topic_distribution    (~4-8 topics with min/max percent)
+   *  3. audience_description  (paragraph about followers)
+   *  4. engagement_suggestion (Persian engagement strategy)
+   *  5. engagement_suggestion_translations (en, ar, es, tr, ur)
+   */
+  async generateNarrative(pageId: number) {
+    const page = await this.pageRepository.findOne({
+      where: { id: pageId },
+      relations: ['posts'],
+    });
+    if (!page) throw new HttpException('Page not found', 404);
+
+    const posts = (page.posts || [])
+      .sort(
+        (a, b) =>
+          new Date(b.published_at || b.created_at).getTime() -
+          new Date(a.published_at || a.created_at).getTime(),
+      )
+      .slice(0, 30);
+
+    if (posts.length === 0) {
+      throw new HttpException('برای تولید توصیف، حداقل یک پست لازم است. ابتدا بارگیری و پردازش انجام دهید.', 400);
+    }
+
+    const postLines = posts
+      .map((p, i) => {
+        const text = p.caption_fa || p.caption || '(بدون متن)';
+        const transcript = p.transcription_fa || p.transcription;
+        const ocr = p.ocr_text_fa || p.ocr_text;
+        const parts: string[] = [text.slice(0, 220)];
+        if (transcript) parts.push(`[رونوشت]: ${String(transcript).slice(0, 220)}`);
+        if (ocr) parts.push(`[متن تصویر]: ${String(ocr).slice(0, 150)}`);
+        return `پست ${i + 1} (${p.post_type || 'text'}, لایک ${p.likes_count}, کامنت ${p.comments_count}): ${parts.join(' / ')}`;
+      })
+      .join('\n');
+
+    const personaSummary = page.persona_radar
+      ? Object.entries(page.persona_radar)
+          .map(([k, v]) => `${k}=${v}`)
+          .join(', ')
+      : 'نامشخص';
+
+    const [systemPrompt, extraInstructions, apiKey, model] = await Promise.all([
+      this.settingsService.get('prompt_page_narrative'),
+      this.settingsService.get('prompt_page_narrative_extra'),
+      this.settingsService.get('openrouter_key'),
+      this.settingsService.get('llm_model'),
+    ]);
+
+    const prompt = `${systemPrompt || 'تو یک تحلیل‌گر رسانه‌ای هستی. توصیف جامع از پیج ارائه بده.'}
+
+اطلاعات پیج:
+- نام: ${page.name}
+- یوزرنیم: @${page.username}
+- پلتفرم: ${page.platform}
+- بیو: ${page.bio || 'ندارد'}
+- فالوور: ${page.followers_count?.toLocaleString() || 0}
+- فالووینگ: ${page.following_count?.toLocaleString() || 0}
+- تعداد کل پست: ${page.posts_count || posts.length}
+- میانگین لایک ۱۰ پست انتهایی: ${page.avg_likes || '—'}
+- میانگین کامنت ۱۰ پست انتهایی: ${page.avg_comments || '—'}
+- نرخ تعامل: ${page.engagement_rate ? page.engagement_rate.toFixed(2) + '٪' : '—'}
+- خوشه موضوعی: ${page.category || 'نامشخص'}
+- کیستی صفحه: ${page.identity_category || 'نامشخص'}
+- ملیت: ${page.nationality || 'نامشخص'}
+- زبان تولیدی: ${page.content_language || page.language || 'نامشخص'}
+- دین/مذهب: ${page.religion || 'نامشخص'}
+- جنسیت: ${page.gender || 'نامشخص'}
+- رده سنی: ${page.age_range || 'نامشخص'}
+- خوشه معنایی: ${page.cluster || '—'}
+- شخصیت رادار: ${personaSummary}
+- دغدغه‌های اصلی: ${(page.pain_points || []).join('، ') || '—'}
+- کلمات کلیدی: ${(page.keywords || []).join('، ') || '—'}
+
+${posts.length} پست انتهایی:
+${postLines}
+${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : ''}
+خروجی را دقیقاً به فرمت JSON زیر برگردان (بدون متن اضافه قبل یا بعدش):
+{
+  "narrative_description": "توصیف ۲۰۰ تا ۳۰۰ کلمه‌ای فارسی، پیوسته و خوانا",
+  "topic_distribution": [
+    {"topic": "نام موضوع به فارسی", "min_percent": 40, "max_percent": 45}
+  ],
+  "audience_description": "یک پاراگراف ۸۰ تا ۱۲۰ کلمه‌ای درباره مخاطب",
+  "engagement_suggestion": "یک پاراگراف ۸۰ تا ۱۲۰ کلمه‌ای پیشنهاد تعامل به فارسی",
+  "engagement_suggestion_translations": {
+    "en": "ترجمه طبیعی به انگلیسی",
+    "ar": "ترجمه طبیعی به عربی",
+    "es": "ترجمه طبیعی به اسپانیولی",
+    "tr": "ترجمه طبیعی به ترکی استانبولی",
+    "ur": "ترجمه طبیعی به اردو"
+  }
+}`;
+
+    try {
+      const response = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+          model: model || 'google/gemini-2.5-pro',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.5,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${apiKey || process.env.OPENROUTER_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 180000,
+        },
+      );
+
+      const choice = response.data?.choices?.[0];
+      const content = choice?.message?.content || choice?.message?.reasoning || '';
+      if (!content) throw new HttpException('LLM returned empty response', 502);
+
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new HttpException('LLM response did not contain valid JSON', 502);
+      const parsed = JSON.parse(jsonMatch[0]);
+
+      page.narrative_description = parsed.narrative_description || null;
+      page.topic_distribution = Array.isArray(parsed.topic_distribution)
+        ? parsed.topic_distribution
+            .map((t: any) => ({
+              topic: String(t.topic || '').trim(),
+              min_percent: Number(t.min_percent) || 0,
+              max_percent: Number(t.max_percent) || 0,
+            }))
+            .filter((t: any) => t.topic && t.max_percent > 0)
+        : null;
+      page.audience_description = parsed.audience_description || null;
+      page.engagement_suggestion = parsed.engagement_suggestion || null;
+      page.engagement_suggestion_translations = parsed.engagement_suggestion_translations || null;
+      page.narrative_generated_at = new Date();
+
+      const saved = await this.pageRepository.save(page);
+
+      return {
+        page: saved,
+        status: 'success',
+        message: 'پنل ۳۶۰° بصیرت با موفقیت تولید شد',
+        narrative: {
+          narrative_description: saved.narrative_description,
+          topic_distribution: saved.topic_distribution,
+          audience_description: saved.audience_description,
+          engagement_suggestion: saved.engagement_suggestion,
+          engagement_suggestion_translations: saved.engagement_suggestion_translations,
+          narrative_generated_at: saved.narrative_generated_at,
+        },
+      };
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      const statusCode = error?.response?.status || 502;
+      const apiMessage =
+        error?.response?.data?.error?.message ||
+        error?.response?.data?.message ||
+        error.message;
+      console.error(`❌ Narrative generation failed (${statusCode}):`, apiMessage);
+      throw new HttpException(`خطا در تولید پنل بصیرت (${statusCode}): ${apiMessage}`, 502);
+    }
   }
 
   async remove(id: number) {
@@ -774,48 +1083,126 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
 
   // --- Analytics helpers ---
 
-  async getCategoryDistribution() {
-    return await this.pageRepository
+  async getCategoryDistribution(pageIds?: number[]) {
+    const qb = this.pageRepository
       .createQueryBuilder('page')
       .select('page.category', 'category')
       .addSelect('COUNT(*)', 'count')
-      .groupBy('page.category')
-      .getRawMany();
+      .groupBy('page.category');
+    if (pageIds) {
+      if (pageIds.length === 0) return [];
+      qb.where('page.id IN (:...ids)', { ids: pageIds });
+    }
+    return await qb.getRawMany();
   }
 
-  async getClusterDistribution() {
-    return await this.pageRepository
+  async getClusterDistribution(pageIds?: number[]) {
+    const qb = this.pageRepository
       .createQueryBuilder('page')
       .select('page.cluster', 'cluster')
       .addSelect('COUNT(*)', 'count')
-      .groupBy('page.cluster')
-      .getRawMany();
+      .groupBy('page.cluster');
+    if (pageIds) {
+      if (pageIds.length === 0) return [];
+      qb.where('page.id IN (:...ids)', { ids: pageIds });
+    }
+    return await qb.getRawMany();
   }
 
-  async getCountryDistribution() {
-    return await this.pageRepository
+  async getCountryDistribution(pageIds?: number[]) {
+    const qb = this.pageRepository
       .createQueryBuilder('page')
       .select('page.country', 'country')
       .addSelect('COUNT(*)', 'count')
-      .groupBy('page.country')
-      .getRawMany();
+      .groupBy('page.country');
+    if (pageIds) {
+      if (pageIds.length === 0) return [];
+      qb.where('page.id IN (:...ids)', { ids: pageIds });
+    }
+    return await qb.getRawMany();
   }
 
-  async getTopInfluencers(limit = 20) {
-    return await this.pageRepository.find({
-      order: { influence_score: 'DESC' },
-      take: limit,
-    });
-  }
-
-  async getGhostPages() {
-    return await this.pageRepository
+  async getLanguageDistribution(pageIds?: number[]) {
+    const qb = this.pageRepository
       .createQueryBuilder('page')
-      .where('page.consistency_rate < :threshold', { threshold: 2 })
-      .orWhere('page.is_active = false')
+      .select('COALESCE(page.content_language, page.language)', 'language')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('COALESCE(page.content_language, page.language)');
+    if (pageIds) {
+      if (pageIds.length === 0) return [];
+      qb.where('page.id IN (:...ids)', { ids: pageIds });
+    }
+    return await qb.getRawMany();
+  }
+
+  async getReligionDistribution(pageIds?: number[]) {
+    const qb = this.pageRepository
+      .createQueryBuilder('page')
+      .select('page.religion', 'religion')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('page.religion');
+    if (pageIds) {
+      if (pageIds.length === 0) return [];
+      qb.where('page.id IN (:...ids)', { ids: pageIds });
+    }
+    return await qb.getRawMany();
+  }
+
+  async getTopInfluencers(limit = 20, pageIds?: number[]) {
+    const qb = this.pageRepository
+      .createQueryBuilder('page')
+      .orderBy('page.influence_score', 'DESC')
+      .take(limit);
+    if (pageIds) {
+      if (pageIds.length === 0) return [];
+      qb.where('page.id IN (:...ids)', { ids: pageIds });
+    }
+    return await qb.getMany();
+  }
+
+  async getGhostPages(pageIds?: number[]) {
+    const qb = this.pageRepository
+      .createQueryBuilder('page')
+      .where('(page.consistency_rate < :threshold OR page.is_active = false)', { threshold: 2 })
       .orderBy('page.consistency_rate', 'ASC')
-      .limit(50)
-      .getMany();
+      .limit(50);
+    if (pageIds) {
+      if (pageIds.length === 0) return [];
+      qb.andWhere('page.id IN (:...ids)', { ids: pageIds });
+    }
+    return await qb.getMany();
+  }
+
+  /**
+   * Resolve scope (all | representatives | cluster) to an explicit list of page IDs
+   * to feed into analytics queries. Returns `undefined` when scope is "all" so
+   * existing analytics keep covering the whole network with no filter.
+   */
+  async resolveScopePageIds(
+    scope?: string,
+    clusterId?: number | string,
+  ): Promise<number[] | undefined> {
+    if (!scope || scope === 'all' || scope === 'network') return undefined;
+
+    if (scope === 'representatives') {
+      const rows = await this.pageRepository.find({
+        where: { is_representative: true },
+        select: ['id'],
+      });
+      return rows.map((r) => r.id);
+    }
+
+    if (scope === 'cluster') {
+      const cid = Number(clusterId);
+      if (!cid) return [];
+      const rows = await this.pageRepository.find({
+        where: { cluster_id: cid },
+        select: ['id'],
+      });
+      return rows.map((r) => r.id);
+    }
+
+    return undefined;
   }
 
   async getSegmentCounts() {
@@ -846,15 +1233,27 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
         username: page.username,
         platform: page.platform,
         category: page.category,
+        identity_category: page.identity_category,
         country: page.country,
+        nationality: page.nationality,
         language: page.language,
+        content_language: page.content_language,
+        religion: page.religion,
+        gender: page.gender,
+        age_range: page.age_range,
         bio: page.bio,
         followers_count: page.followers_count,
         following_count: page.following_count,
+        avg_likes: page.avg_likes,
+        avg_comments: page.avg_comments,
+        engagement_rate: page.engagement_rate,
+        posts_count: page.posts_count,
         cluster: page.cluster,
         credibility_score: page.credibility_score,
         influence_score: page.influence_score,
         consistency_rate: page.consistency_rate,
+        affinity_score: page.affinity_score,
+        alignment_score: page.alignment_score,
         persona_radar: page.persona_radar,
         pain_points: page.pain_points,
         keywords: page.keywords,
@@ -913,5 +1312,28 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
     }
 
     return results;
+  }
+
+  /**
+   * Get pages with high influence but zero field reports (blind spots).
+   * These are priority targets for field research.
+   */
+  async getBlindSpots(limit: number = 6) {
+    const pages = await this.pageRepository
+      .createQueryBuilder('page')
+      .leftJoin('page.field_reports', 'fr')
+      .where('fr.id IS NULL')
+      .andWhere('page.influence_score > 0')
+      .orderBy('page.influence_score', 'DESC')
+      .take(limit)
+      .getMany();
+
+    return pages.map((p) => ({
+      id: p.id,
+      name: p.name,
+      username: p.username,
+      platform: p.platform,
+      influence: p.influence_score || 0,
+    }));
   }
 }

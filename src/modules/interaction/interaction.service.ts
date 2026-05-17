@@ -17,6 +17,13 @@ export class InteractionService {
     });
   }
 
+  async findByActionPlan(actionPlanId: number) {
+    return await this.repo.find({
+      where: { action_plan_id: actionPlanId },
+      order: { created_at: 'DESC' },
+    });
+  }
+
   async create(dto: any) {
     const interaction = this.repo.create(dto);
     return await this.repo.save(interaction);

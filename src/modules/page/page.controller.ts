@@ -37,6 +37,11 @@ export class PageController {
     return this.pageService.getSegmentCounts();
   }
 
+  @Get('analytics/blind-spots')
+  getBlindSpots(@Query('limit') limit: number) {
+    return this.pageService.getBlindSpots(limit || 6);
+  }
+
   @Get(':id/progress')
   getPageProgress(@Param('id') id: number, @Query('operation') operation?: 'fetch' | 'process') {
     return getProgress(id, operation);
@@ -70,6 +75,11 @@ export class PageController {
   @Post(':id/process')
   processPageData(@Param('id') id: number, @Body() body: { timeRange?: string; services?: string[]; force?: boolean }) {
     return this.pageService.processWithLLM(id, body.timeRange, body.services, body.force);
+  }
+
+  @Post(':id/narrative')
+  generateNarrative(@Param('id') id: number) {
+    return this.pageService.generateNarrative(id);
   }
 
   @Get(':id/export')

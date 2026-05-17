@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { InteractionService } from './interaction.service';
 
 @Controller('interactions')
@@ -8,6 +8,11 @@ export class InteractionController {
   @Get('page/:pageId')
   findByPage(@Param('pageId') pageId: number) {
     return this.interactionService.findByPage(pageId);
+  }
+
+  @Get('action-plan/:actionPlanId')
+  findByActionPlan(@Param('actionPlanId') actionPlanId: number) {
+    return this.interactionService.findByActionPlan(actionPlanId);
   }
 
   @Post()

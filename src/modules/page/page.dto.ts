@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString, IsNumber } from 'class-validator';
+import { IsOptional, IsString, IsNumber, IsBoolean } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreatePageDto {
@@ -20,11 +20,35 @@ export class CreatePageDto {
 
   @IsOptional()
   @IsString()
+  identity_category?: string;
+
+  @IsOptional()
+  @IsString()
   country?: string;
 
   @IsOptional()
   @IsString()
+  nationality?: string;
+
+  @IsOptional()
+  @IsString()
   language?: string;
+
+  @IsOptional()
+  @IsString()
+  content_language?: string;
+
+  @IsOptional()
+  @IsString()
+  religion?: string;
+
+  @IsOptional()
+  @IsString()
+  gender?: string;
+
+  @IsOptional()
+  @IsString()
+  age_range?: string;
 
   @IsOptional()
   @IsNumber()
@@ -76,11 +100,35 @@ export class UpdatePageDto {
 
   @IsOptional()
   @IsString()
+  identity_category?: string;
+
+  @IsOptional()
+  @IsString()
   country?: string;
 
   @IsOptional()
   @IsString()
+  nationality?: string;
+
+  @IsOptional()
+  @IsString()
   language?: string;
+
+  @IsOptional()
+  @IsString()
+  content_language?: string;
+
+  @IsOptional()
+  @IsString()
+  religion?: string;
+
+  @IsOptional()
+  @IsString()
+  gender?: string;
+
+  @IsOptional()
+  @IsString()
+  age_range?: string;
 
   @IsOptional()
   @IsNumber()
@@ -103,6 +151,14 @@ export class UpdatePageDto {
   cluster?: string;
 
   @IsOptional()
+  @IsNumber()
+  cluster_id?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  is_representative?: boolean;
+
+  @IsOptional()
   keywords?: string[];
 
   @IsOptional()
@@ -117,6 +173,26 @@ export class UpdatePageDto {
 
   @IsOptional()
   client_keywords?: string[];
+
+  @IsOptional()
+  @IsNumber()
+  credibility_score?: number;
+
+  @IsOptional()
+  @IsNumber()
+  influence_score?: number;
+
+  @IsOptional()
+  @IsNumber()
+  consistency_rate?: number;
+
+  @IsOptional()
+  @IsNumber()
+  affinity_score?: number;
+
+  @IsOptional()
+  @IsNumber()
+  alignment_score?: number;
 }
 
 export class PageQueryDto {
@@ -126,11 +202,25 @@ export class PageQueryDto {
 
   @IsOptional()
   @IsString()
+  identity_category?: string;
+
+  @IsOptional()
+  @IsString()
   platform?: string;
 
   @IsOptional()
   @IsString()
   cluster?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  cluster_id?: number;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  is_representative?: boolean;
 
   @IsOptional()
   @IsString()

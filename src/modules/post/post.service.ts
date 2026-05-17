@@ -20,6 +20,7 @@ export class PostService {
 
   async findAll(query: PostQueryDto) {
     const { page_id, sentiment_label, post_type, search, page = 1, limit = 20 } = query;
+    const pageIds: number[] | undefined = (query as any).page_ids;
     const where: any = {};
 
     if (page_id) where.page_id = page_id;
@@ -27,13 +28,19 @@ export class PostService {
     if (post_type) where.post_type = post_type;
     if (search) where.caption = Like(`%${search}%`);
 
-    const [data, total] = await this.postRepository.findAndCount({
-      where,
-      skip: (page - 1) * limit,
-      take: limit,
-      order: { published_at: 'DESC' },
-      relations: ['page'],
-    });
+    const qb = this.postRepository.createQueryBuilder('post')
+      .leftJoinAndSelect('post.page', 'page')
+      .where('1=1');
+    if (page_id) qb.andWhere('post.page_id = :pid', { pid: page_id });
+    if (sentiment_label) qb.andWhere('post.sentiment_label = :sl', { sl: sentiment_label });
+    if (post_type) qb.andWhere('post.post_type = :pt', { pt: post_type });
+    if (search) qb.andWhere('post.caption ILIKE :s', { s: `%${search}%` });
+    if (pageIds) {
+      if (pageIds.length === 0) return { data: [], total: 0, page, limit };
+      qb.andWhere('post.page_id IN (:...ids)', { ids: pageIds });
+    }
+    qb.orderBy('post.published_at', 'DESC').skip((page - 1) * limit).take(limit);
+    const [data, total] = await qb.getManyAndCount();
 
     return { data, total, page, limit };
   }
@@ -153,17 +160,19 @@ export class PostService {
     const ext = path.extname(filePath).toLowerCase();
     const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
 
-    const [apiKey] = await Promise.all([
+    const [apiKey, ocrPrompt, fastModel] = await Promise.all([
       this.settingsService.get('openrouter_key'),
+      this.settingsService.get('prompt_ocr'),
+      this.settingsService.get('llm_model_fast'),
     ]);
 
     const response = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
       {
         // Use Flash for OCR — faster, no reasoning overhead, excellent at text extraction
-        model: 'google/gemini-2.0-flash-001',
+        model: fastModel || 'google/gemini-2.0-flash-001',
         messages: [{ role: 'user', content: [
-          { type: 'text', text: 'Extract ALL visible text from this image exactly as written. Include every line of text overlays, captions, watermarks, subtitles, and any text in screenshots. Preserve line breaks. Return ONLY the extracted text, nothing else. If there is no text in the image, return exactly: NO_TEXT' },
+          { type: 'text', text: ocrPrompt || 'Extract ALL visible text from this image exactly as written. Include every line of text overlays, captions, watermarks, subtitles, and any text in screenshots. Preserve line breaks. Return ONLY the extracted text, nothing else. If there is no text in the image, return exactly: NO_TEXT' },
           { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
         ]}],
         max_tokens: 2000,
@@ -184,9 +193,11 @@ export class PostService {
   }
 
   private async analyzePostWithLLM(post: Post): Promise<void> {
-    const [apiKey, model] = await Promise.all([
+    const [apiKey, model, basePrompt, extraPrompt] = await Promise.all([
       this.settingsService.get('openrouter_key'),
       this.settingsService.get('llm_model'),
+      this.settingsService.get('prompt_post_analysis'),
+      this.settingsService.get('prompt_post_analysis_extra'),
     ]);
 
     let contentDesc = `کپشن: "${(post.caption || '(بدون متن)').slice(0, 300)}"`;
@@ -194,10 +205,10 @@ export class PostService {
     if (post.ocr_text) contentDesc += `\nمتن روی تصویر: "${post.ocr_text.slice(0, 300)}"`;
     if (post.manual_context) contentDesc += `\nتوضیح دستی: "${post.manual_context.slice(0, 500)}"`;
 
-    const prompt = `تحلیل این پست را انجام بده. خروجی را دقیقاً به فرمت JSON زیر برگردان (بدون متن اضافه):
+    const promptTemplate = basePrompt || `تحلیل این پست را انجام بده. خروجی را دقیقاً به فرمت JSON زیر برگردان (بدون متن اضافه):
 
 محتوای پست:
-${contentDesc}
+{POST_CONTENT}
 
 {
   "sentiment_score": عدد -1 تا 1,
@@ -208,6 +219,8 @@ ${contentDesc}
   "topics": ["موضوع۱", "موضوع۲"],
   "keywords": ["کلمه۱", "کلمه۲", "کلمه۳"]
 }`;
+
+    const prompt = promptTemplate.replace('{POST_CONTENT}', contentDesc) + (extraPrompt ? `\n\n${extraPrompt}` : '');
 
     const response = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
@@ -250,15 +263,19 @@ ${contentDesc}
 
   // --- Analytics ---
 
-  async getTrendingKeywords(days = 7) {
+  async getTrendingKeywords(days = 7, pageIds?: number[]) {
     const since = new Date();
     since.setDate(since.getDate() - days);
 
-    const posts = await this.postRepository
+    const qb = this.postRepository
       .createQueryBuilder('post')
       .select('post.extracted_keywords')
-      .where('post.published_at >= :since', { since })
-      .getMany();
+      .where('post.published_at >= :since', { since });
+    if (pageIds) {
+      if (pageIds.length === 0) return [];
+      qb.andWhere('post.page_id IN (:...ids)', { ids: pageIds });
+    }
+    const posts = await qb.getMany();
 
     const keywordMap: Record<string, number> = {};
     for (const post of posts) {
@@ -275,7 +292,7 @@ ${contentDesc}
       .map(([keyword, count]) => ({ keyword, count }));
   }
 
-  async getSentimentTimeline(pageId?: number, days = 30, dateFilter?: Date) {
+  async getSentimentTimeline(pageId?: number, days = 30, dateFilter?: Date, pageIds?: number[]) {
     const since = dateFilter || (() => {
       const date = new Date();
       date.setDate(date.getDate() - days);
@@ -292,6 +309,10 @@ ${contentDesc}
     if (pageId) {
       qb.andWhere('post.page_id = :pageId', { pageId });
     }
+    if (pageIds) {
+      if (pageIds.length === 0) return [];
+      qb.andWhere('post.page_id IN (:...ids)', { ids: pageIds });
+    }
 
     return await qb
       .groupBy('date')
@@ -299,15 +320,19 @@ ${contentDesc}
       .getRawMany();
   }
 
-  async getTopicGravity(days = 7) {
+  async getTopicGravity(days = 7, pageIds?: number[]) {
     const since = new Date();
     since.setDate(since.getDate() - days);
 
-    const posts = await this.postRepository
+    const qb = this.postRepository
       .createQueryBuilder('post')
       .select(['post.extracted_topics', 'post.sentiment_label'])
-      .where('post.published_at >= :since', { since })
-      .getMany();
+      .where('post.published_at >= :since', { since });
+    if (pageIds) {
+      if (pageIds.length === 0) return [];
+      qb.andWhere('post.page_id IN (:...ids)', { ids: pageIds });
+    }
+    const posts = await qb.getMany();
 
     const topicMap: Record<string, { count: number; sentiments: Record<string, number> }> = {};
     for (const post of posts) {
@@ -327,16 +352,21 @@ ${contentDesc}
       .map(([topic, data]) => ({ topic, ...data }));
   }
 
-  async getReshareTree(days = 7) {
+  async getReshareTree(days = 7, pageIds?: number[]) {
     const since = new Date();
     since.setDate(since.getDate() - days);
 
-    return await this.postRepository
+    const qb = this.postRepository
       .createQueryBuilder('post')
       .select('post.original_source', 'source')
       .addSelect('COUNT(*)', 'reshare_count')
       .where('post.is_reshare = true')
-      .andWhere('post.published_at >= :since', { since })
+      .andWhere('post.published_at >= :since', { since });
+    if (pageIds) {
+      if (pageIds.length === 0) return [];
+      qb.andWhere('post.page_id IN (:...ids)', { ids: pageIds });
+    }
+    return await qb
       .groupBy('post.original_source')
       .orderBy('reshare_count', 'DESC')
       .limit(30)
@@ -364,61 +394,65 @@ ${contentDesc}
     return posts;
   }
 
-  async getReactionVelocity(days = 7) {
+  async getReactionVelocity(days = 7, pageIds?: number[]) {
     const since = new Date();
     since.setDate(since.getDate() - days);
 
-    // Measure average time between a topic appearing and network coverage
-    const result = await this.postRepository
+    const qb = this.postRepository
       .createQueryBuilder('post')
       .select("DATE(post.published_at)", 'date')
       .addSelect('MIN(post.published_at)', 'first_post')
       .addSelect('MAX(post.published_at)', 'last_post')
       .addSelect('COUNT(DISTINCT post.page_id)', 'unique_pages')
       .addSelect('COUNT(*)', 'total_posts')
-      .where('post.published_at >= :since', { since })
+      .where('post.published_at >= :since', { since });
+    if (pageIds) {
+      if (pageIds.length === 0) return [];
+      qb.andWhere('post.page_id IN (:...ids)', { ids: pageIds });
+    }
+    return await qb
       .groupBy('date')
       .orderBy('date', 'DESC')
       .getRawMany();
-
-    return result;
   }
 
-  async getNetworkPulse() {
+  async getNetworkPulse(pageIds?: number[]) {
     // Activity level in the last 24 hours, broken by hour
     const since = new Date();
     since.setHours(since.getHours() - 24);
 
-    const result = await this.postRepository
+    const qb = this.postRepository
       .createQueryBuilder('post')
       .select("EXTRACT(HOUR FROM post.published_at)", 'hour')
       .addSelect('COUNT(*)', 'post_count')
-      .where('post.published_at >= :since', { since })
-      .groupBy('hour')
-      .orderBy('hour', 'ASC')
-      .getRawMany();
-
-    return result;
+      .where('post.published_at >= :since', { since });
+    if (pageIds) {
+      if (pageIds.length === 0) return [];
+      qb.andWhere('post.page_id IN (:...ids)', { ids: pageIds });
+    }
+    return await qb.groupBy('hour').orderBy('hour', 'ASC').getRawMany();
   }
 
-  async getNetworkPulseWeekly() {
+  async getNetworkPulseWeekly(pageIds?: number[]) {
     const since = new Date();
     since.setDate(since.getDate() - 7);
 
-    // Get posts grouped by date and 6-hour period (0-5, 6-11, 12-17, 18-23)
-    const result = await this.postRepository
+    const qb = this.postRepository
       .createQueryBuilder('post')
       .select("DATE(post.published_at)", 'date')
       .addSelect("FLOOR(EXTRACT(HOUR FROM post.published_at) / 6)", 'period')
       .addSelect('COUNT(*)', 'count')
-      .where('post.published_at >= :since', { since })
+      .where('post.published_at >= :since', { since });
+    if (pageIds) {
+      if (pageIds.length === 0) return [];
+      qb.andWhere('post.page_id IN (:...ids)', { ids: pageIds });
+    }
+    return await qb
       .groupBy('date')
       .addGroupBy('period')
       .orderBy('date', 'ASC')
       .addOrderBy('period', 'ASC')
       .getRawMany();
-
-    return result;
   }
 
   async getPulseByPage(days = 7) {
@@ -447,42 +481,63 @@ ${contentDesc}
     return map;
   }
 
-  async getActivityIndex() {
+  async getActivityIndex(pageIds?: number[]) {
     // Compare last 7 days volume + engagement vs historic average
     // Exclude stories from engagement calculation (they don't return interactions from API)
     const now = new Date();
     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
+    const empty = pageIds && pageIds.length === 0;
+    if (empty) {
+      return {
+        post_change: 0,
+        engagement_change: 0,
+        recent_posts: 0,
+        recent_engagement: 0,
+        avg_weekly_posts: 0,
+        avg_weekly_engagement: 0,
+      };
+    }
+
+    const applyScope = (qb: any) => {
+      if (pageIds && pageIds.length > 0) qb.andWhere('post.page_id IN (:...ids)', { ids: pageIds });
+      return qb;
+    };
+
     // Last 7 days — post count (all types)
-    const recentPostCount = await this.postRepository
-      .createQueryBuilder('post')
-      .select('COUNT(*)', 'count')
-      .where('post.published_at >= :weekAgo', { weekAgo })
-      .getRawOne();
+    const recentPostCount = await applyScope(
+      this.postRepository
+        .createQueryBuilder('post')
+        .select('COUNT(*)', 'count')
+        .where('post.published_at >= :weekAgo', { weekAgo }),
+    ).getRawOne();
 
     // Last 7 days — engagement (exclude stories)
-    const recentEngagement = await this.postRepository
-      .createQueryBuilder('post')
-      .select('COALESCE(SUM(post.likes_count + post.comments_count + post.shares_count), 0)', 'total')
-      .where('post.published_at >= :weekAgo', { weekAgo })
-      .andWhere("post.post_type != 'story'")
-      .getRawOne();
+    const recentEngagement = await applyScope(
+      this.postRepository
+        .createQueryBuilder('post')
+        .select('COALESCE(SUM(post.likes_count + post.comments_count + post.shares_count), 0)', 'total')
+        .where('post.published_at >= :weekAgo', { weekAgo })
+        .andWhere("post.post_type != 'story'"),
+    ).getRawOne();
 
     // Previous 23 days — post count
-    const historicPostCount = await this.postRepository
-      .createQueryBuilder('post')
-      .select('COUNT(*)', 'count')
-      .where('post.published_at >= :monthAgo AND post.published_at < :weekAgo', { monthAgo, weekAgo })
-      .getRawOne();
+    const historicPostCount = await applyScope(
+      this.postRepository
+        .createQueryBuilder('post')
+        .select('COUNT(*)', 'count')
+        .where('post.published_at >= :monthAgo AND post.published_at < :weekAgo', { monthAgo, weekAgo }),
+    ).getRawOne();
 
     // Previous 23 days — engagement (exclude stories)
-    const historicEngagement = await this.postRepository
-      .createQueryBuilder('post')
-      .select('COALESCE(SUM(post.likes_count + post.comments_count + post.shares_count), 0)', 'total')
-      .where('post.published_at >= :monthAgo AND post.published_at < :weekAgo', { monthAgo, weekAgo })
-      .andWhere("post.post_type != 'story'")
-      .getRawOne();
+    const historicEngagement = await applyScope(
+      this.postRepository
+        .createQueryBuilder('post')
+        .select('COALESCE(SUM(post.likes_count + post.comments_count + post.shares_count), 0)', 'total')
+        .where('post.published_at >= :monthAgo AND post.published_at < :weekAgo', { monthAgo, weekAgo })
+        .andWhere("post.post_type != 'story'"),
+    ).getRawOne();
 
     const recentPosts = Number(recentPostCount?.count || 0);
     const recentEng = Number(recentEngagement?.total || 0);
@@ -507,34 +562,43 @@ ${contentDesc}
     };
   }
 
-  async getHighImpactPosts(limit = 5) {
+  async getHighImpactPosts(limit = 5, pageIds?: number[]) {
     const since = new Date();
     since.setDate(since.getDate() - 7); // Last 7 days instead of 24h
 
-    return await this.postRepository
+    const qb = this.postRepository
       .createQueryBuilder('post')
       .leftJoinAndSelect('post.page', 'page')
-      .where('post.published_at >= :since', { since })
+      .where('post.published_at >= :since', { since });
+    if (pageIds) {
+      if (pageIds.length === 0) return [];
+      qb.andWhere('post.page_id IN (:...ids)', { ids: pageIds });
+    }
+    return await qb
       .orderBy('(post.likes_count + post.comments_count + post.shares_count)', 'DESC')
       .limit(limit)
       .getMany();
   }
 
-  async getKeywordVelocity() {
+  async getKeywordVelocity(pageIds?: number[]) {
     const now = new Date();
     const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const prev24h = new Date(now.getTime() - 48 * 60 * 60 * 1000);
 
-    const [recentPosts, olderPosts] = await Promise.all([
-      this.postRepository.createQueryBuilder('post')
-        .select(['post.extracted_keywords'])
-        .where('post.published_at >= :since', { since: last24h })
-        .getMany(),
-      this.postRepository.createQueryBuilder('post')
-        .select(['post.extracted_keywords'])
-        .where('post.published_at >= :start AND post.published_at < :end', { start: prev24h, end: last24h })
-        .getMany(),
-    ]);
+    if (pageIds && pageIds.length === 0) return [];
+
+    const recentQb = this.postRepository.createQueryBuilder('post')
+      .select(['post.extracted_keywords'])
+      .where('post.published_at >= :since', { since: last24h });
+    const olderQb = this.postRepository.createQueryBuilder('post')
+      .select(['post.extracted_keywords'])
+      .where('post.published_at >= :start AND post.published_at < :end', { start: prev24h, end: last24h });
+    if (pageIds && pageIds.length > 0) {
+      recentQb.andWhere('post.page_id IN (:...ids)', { ids: pageIds });
+      olderQb.andWhere('post.page_id IN (:...ids)', { ids: pageIds });
+    }
+
+    const [recentPosts, olderPosts] = await Promise.all([recentQb.getMany(), olderQb.getMany()]);
 
     const recentMap: Record<string, number> = {};
     const olderMap: Record<string, number> = {};
@@ -555,12 +619,16 @@ ${contentDesc}
     return velocity.slice(0, 15);
   }
 
-  async getSentimentInfluenceMatrix() {
-    const posts = await this.postRepository
+  async getSentimentInfluenceMatrix(pageIds?: number[]) {
+    if (pageIds && pageIds.length === 0) return [];
+    const qb = this.postRepository
       .createQueryBuilder('post')
       .leftJoinAndSelect('post.page', 'page')
-      .where('post.published_at >= :since', { since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) })
-      .getMany();
+      .where('post.published_at >= :since', { since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) });
+    if (pageIds && pageIds.length > 0) {
+      qb.andWhere('post.page_id IN (:...ids)', { ids: pageIds });
+    }
+    const posts = await qb.getMany();
 
     // Group by page, calculate avg sentiment and total engagement
     const pageMap: Record<number, { name: string; influence: number; avg_sentiment: number; post_count: number; total_engagement: number }> = {};
@@ -591,8 +659,8 @@ ${contentDesc}
     }));
   }
 
-  async getNarrativeBattle() {
-    const topics = await this.getTopicGravity(7);
+  async getNarrativeBattle(pageIds?: number[]) {
+    const topics = await this.getTopicGravity(7, pageIds);
     const top3 = topics.slice(0, 3);
 
     return top3.map((topic) => {
@@ -611,7 +679,7 @@ ${contentDesc}
   }
 
   async getPostsFeed(query: any) {
-    const { sentiment_label, post_type, search, topic, outliers_only, page = 1, limit = 20 } = query;
+    const { sentiment_label, post_type, search, topic, outliers_only, platform, category, cluster_id, country, date_from, date_to, page = 1, limit = 20 } = query;
 
     const qb = this.postRepository.createQueryBuilder('post')
       .leftJoinAndSelect('post.page', 'page');
@@ -620,6 +688,16 @@ ${contentDesc}
     if (post_type) qb.andWhere('post.post_type = :post_type', { post_type });
     if (search) qb.andWhere('post.caption ILIKE :search', { search: `%${search}%` });
     if (topic) qb.andWhere(':topic = ANY(post.extracted_topics)', { topic });
+
+    // Page-level filters
+    if (platform) qb.andWhere('page.platform = :platform', { platform });
+    if (category) qb.andWhere('page.category = :category', { category });
+    if (cluster_id) qb.andWhere('page.cluster_id = :cluster_id', { cluster_id: Number(cluster_id) });
+    if (country) qb.andWhere('page.country = :country', { country });
+
+    // Date range filters
+    if (date_from) qb.andWhere('post.published_at >= :date_from', { date_from: new Date(date_from) });
+    if (date_to) qb.andWhere('post.published_at <= :date_to', { date_to: new Date(date_to) });
 
     qb.orderBy('post.published_at', 'DESC');
     qb.skip((page - 1) * limit).take(limit);

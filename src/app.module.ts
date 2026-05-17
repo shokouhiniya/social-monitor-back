@@ -1,5 +1,4 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
-import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { DataSource } from 'typeorm';
@@ -19,12 +18,12 @@ import { SettingsModule } from './modules/settings/settings.module';
 import { TelegramModule } from './modules/telegram/telegram.module';
 import { TwitterModule } from './modules/twitter/twitter.module';
 import { TranscriptionModule } from './modules/transcription/transcription.module';
+import { ClusterModule } from './modules/cluster/cluster.module';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ResponseInterceptor } from './libs/interceptors/response.interceptor';
 
 @Module({
   imports: [
-    ScheduleModule.forRoot(),
     AuthModule,
     DatabaseModule,
     ConfigModule,
@@ -40,6 +39,7 @@ import { ResponseInterceptor } from './libs/interceptors/response.interceptor';
     TelegramModule,
     TwitterModule,
     TranscriptionModule,
+    ClusterModule,
   ],
   controllers: [AppController],
   providers: [

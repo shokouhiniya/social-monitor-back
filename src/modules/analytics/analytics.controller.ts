@@ -6,18 +6,45 @@ export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
   @Get('macro-dashboard')
-  getMacroDashboard() {
-    return this.analyticsService.getMacroDashboard();
+  getMacroDashboard(
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getMacroDashboard(scope, clusterId ? Number(clusterId) : undefined);
   }
 
   @Get('alignment-index')
-  getAlignmentIndex() {
-    return this.analyticsService.getAlignmentIndex();
+  getAlignmentIndex(
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getAlignmentIndex(scope, clusterId ? Number(clusterId) : undefined);
   }
 
   @Post('silence-radar')
-  getSilenceRadar(@Body('global_topics') globalTopics: string[]) {
-    return this.analyticsService.getSilenceRadar(globalTopics);
+  getSilenceRadar(
+    @Body('global_topics') globalTopics: string[],
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getSilenceRadar(
+      globalTopics,
+      scope,
+      clusterId ? Number(clusterId) : undefined,
+    );
+  }
+
+  @Post('silence-radar/page/:pageId')
+  getPageSilenceRadar(
+    @Param('pageId') pageId: number,
+    @Body('global_topics') globalTopics: string[],
+    @Body('days') days?: number,
+  ) {
+    return this.analyticsService.getPageSilenceRadar(
+      Number(pageId),
+      globalTopics,
+      days ? Number(days) : 30,
+    );
   }
 
   @Get('profile/:pageId')
@@ -29,73 +56,156 @@ export class AnalyticsController {
   }
 
   @Get('reaction-velocity')
-  getReactionVelocity(@Query('days') days: number) {
-    return this.analyticsService.getReactionVelocity(days);
+  getReactionVelocity(
+    @Query('days') days: number,
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getReactionVelocity(
+      days,
+      scope,
+      clusterId ? Number(clusterId) : undefined,
+    );
   }
 
   @Get('network-pulse')
-  getNetworkPulse() {
-    return this.analyticsService.getNetworkPulse();
+  getNetworkPulse(
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getNetworkPulse(scope, clusterId ? Number(clusterId) : undefined);
   }
 
   @Get('network-pulse-weekly')
-  getNetworkPulseWeekly() {
-    return this.analyticsService.getNetworkPulseWeekly();
+  getNetworkPulseWeekly(
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getNetworkPulseWeekly(
+      scope,
+      clusterId ? Number(clusterId) : undefined,
+    );
   }
 
   @Get('ghost-pages')
-  getGhostPages() {
-    return this.analyticsService.getGhostPages();
+  getGhostPages(
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getGhostPages(scope, clusterId ? Number(clusterId) : undefined);
   }
 
   @Get('activity-index')
-  getActivityIndex() {
-    return this.analyticsService.getActivityIndex();
+  getActivityIndex(
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getActivityIndex(scope, clusterId ? Number(clusterId) : undefined);
   }
 
   @Get('periodic-report')
-  getPeriodicReport(@Query('hours') hours?: number) {
-    return this.analyticsService.getPeriodicReport(hours ? Number(hours) : 6);
+  getPeriodicReport(
+    @Query('hours') hours?: number,
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getPeriodicReport(
+      hours ? Number(hours) : 6,
+      scope,
+      clusterId ? Number(clusterId) : undefined,
+    );
   }
 
   @Get('latest-posts')
-  getLatestPosts(@Query('limit') limit: number) {
-    return this.analyticsService.getLatestPosts(limit || 10);
+  getLatestPosts(
+    @Query('limit') limit: number,
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getLatestPosts(
+      limit || 10,
+      scope,
+      clusterId ? Number(clusterId) : undefined,
+    );
   }
 
   @Get('high-impact-posts')
-  getHighImpactPosts(@Query('limit') limit: number) {
-    return this.analyticsService.getHighImpactPosts(limit || 5);
+  getHighImpactPosts(
+    @Query('limit') limit: number,
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getHighImpactPosts(
+      limit || 5,
+      scope,
+      clusterId ? Number(clusterId) : undefined,
+    );
   }
 
   @Get('narrative-health')
-  getNarrativeHealth() {
-    return this.analyticsService.getNarrativeHealth();
+  getNarrativeHealth(
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getNarrativeHealth(
+      scope,
+      clusterId ? Number(clusterId) : undefined,
+    );
   }
 
   @Get('crisis-corridor')
-  getCrisisCorridor() {
-    return this.analyticsService.getCrisisCorridor();
+  getCrisisCorridor(
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getCrisisCorridor(
+      scope,
+      clusterId ? Number(clusterId) : undefined,
+    );
   }
 
   @Get('ai-synthesizer')
-  getAiSynthesizer() {
-    return this.analyticsService.getAiSynthesizer();
+  getAiSynthesizer(
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getAiSynthesizer(
+      scope,
+      clusterId ? Number(clusterId) : undefined,
+    );
   }
 
   @Get('keyword-velocity')
-  getKeywordVelocity() {
-    return this.analyticsService.getKeywordVelocity();
+  getKeywordVelocity(
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getKeywordVelocity(
+      scope,
+      clusterId ? Number(clusterId) : undefined,
+    );
   }
 
   @Get('sentiment-influence-matrix')
-  getSentimentInfluenceMatrix() {
-    return this.analyticsService.getSentimentInfluenceMatrix();
+  getSentimentInfluenceMatrix(
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getSentimentInfluenceMatrix(
+      scope,
+      clusterId ? Number(clusterId) : undefined,
+    );
   }
 
   @Get('narrative-battle')
-  getNarrativeBattle() {
-    return this.analyticsService.getNarrativeBattle();
+  getNarrativeBattle(
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getNarrativeBattle(
+      scope,
+      clusterId ? Number(clusterId) : undefined,
+    );
   }
 
   @Post('generate-alerts')
@@ -111,6 +221,17 @@ export class AnalyticsController {
   @Post('refresh')
   refreshDashboard() {
     return this.analyticsService.refreshDashboard();
+  }
+
+  @Get('actors-scene-report')
+  getActorsSceneReport(
+    @Query('scope') scope?: string,
+    @Query('clusterId') clusterId?: number,
+  ) {
+    return this.analyticsService.getActorsSceneReport(
+      scope,
+      clusterId ? Number(clusterId) : undefined,
+    );
   }
 
   @Get('refresh-status')
