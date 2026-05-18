@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { PageService } from './page.service';
 import { CreatePageDto, UpdatePageDto, PageQueryDto } from './page.dto';
-import { getProgress } from './page-progress';
+import { getProgress, getAllRunning } from './page-progress';
 
 @Controller('pages')
 export class PageController {
@@ -40,6 +40,11 @@ export class PageController {
   @Get('analytics/blind-spots')
   getBlindSpots(@Query('limit') limit: number) {
     return this.pageService.getBlindSpots(limit || 6);
+  }
+
+  @Get('batch-status')
+  getBatchStatus() {
+    return getAllRunning();
   }
 
   @Get(':id/progress')

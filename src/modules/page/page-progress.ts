@@ -82,3 +82,22 @@ export function getProgress(pageId: number, operation?: 'fetch' | 'process'): Pa
   if (p) results.push(p);
   return results.length > 0 ? results : null;
 }
+
+/**
+ * Check if a page already has a running operation (to prevent duplicate requests).
+ */
+export function isRunning(pageId: number, operation: 'fetch' | 'process'): boolean {
+  const progress = progressMap.get(key(pageId, operation));
+  return progress?.status === 'running';
+}
+
+/**
+ * Get all currently running operations (for global batch status).
+ */
+export function getAllRunning(): PageProgress[] {
+  const running: PageProgress[] = [];
+  for (const entry of progressMap.values()) {
+    if (entry.status === 'running') running.push(entry);
+  }
+  return running;
+}

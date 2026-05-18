@@ -12,7 +12,7 @@ import { Cluster } from '../cluster/cluster.entity';
 import { CreatePageDto, UpdatePageDto, PageQueryDto } from './page.dto';
 import { SettingsService } from '../settings/settings.service';
 import { TranscriptionService } from '../transcription/transcription.service';
-import { startProgress, updateProgress, completeProgress, failProgress } from './page-progress';
+import { startProgress, updateProgress, completeProgress, failProgress, isRunning, getAllRunning } from './page-progress';
 import { TOPICAL_CLUSTERS, IDENTITY_CATEGORIES, GENDERS, AGE_RANGES, RELIGIONS } from './page.constants';
 
 @Injectable()
@@ -237,6 +237,11 @@ export class PageService {
   }
 
   async fetchPageData(id: number) {
+    // Guard: prevent duplicate fetch if already running
+    if (isRunning(id, 'fetch')) {
+      return { status: 'already_running', message: 'بارگیری این پیج در حال اجراست' };
+    }
+
     const page = await this.pageRepository.findOne({ where: { id } });
     if (!page) throw new HttpException('Page not found', 404);
     if (!page.username) throw new HttpException('Username is required for fetching', 400);
@@ -499,6 +504,11 @@ export class PageService {
   }
 
   async processWithLLM(id: number, timeRange?: string, services?: string[], force?: boolean) {
+    // Guard: prevent duplicate process if already running
+    if (isRunning(id, 'process')) {
+      return { status: 'already_running', message: 'تحلیل این پیج در حال اجراست' };
+    }
+
     const page = await this.pageRepository.findOne({
       where: { id },
       relations: ['posts'],
