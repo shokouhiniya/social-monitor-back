@@ -258,22 +258,45 @@ export class SettingsService implements OnModuleInit {
    * This only runs once — after the user saves any custom value, it won't be touched again.
    */
   private async migrateOldPromptDefaults() {
-    const OLD_DEFAULTS_PREFIXES: Record<string, string> = {
-      'prompt_page_analysis': 'تو یک تحلیل‌گر ارشد رسانه‌ای هستی که در یک سیستم پایش',
-      'prompt_page_narrative': 'تو یک تحلیل‌گر ارشد رسانه‌ای هستی که برای پنل ۳۶۰°',
-      'prompt_alert_generation': 'تو یک تحلیل‌گر استراتژیک رسانه‌ای هستی که در سیستم پایش',
-      'prompt_report_generation': 'تو یک تحلیل‌گر ارشد رسانه‌ای هستی که گزارش‌های دوره‌ای',
-      'prompt_ai_synthesizer': 'بر اساس اطلاعات زیر، یک جمله کوتاه و تاثیرگذار',
-      'prompt_ocr': 'Extract ALL visible text from this image exactly as written',
+    // Match any value that starts with these known old prefixes (covers multiple versions)
+    const OLD_DEFAULTS_PREFIXES: Record<string, string[]> = {
+      'prompt_page_analysis': [
+        'تو یک تحلیل‌گر ارشد رسانه‌ای هستی که در یک سیستم پایش',
+        'تو یک تحلیل‌گر رسانه‌ای هوشمند هستی',
+        'تو یک تحلیل‌گر ارشد رسانه‌ای هستی. اطلاعات زیر',
+        'تو یک تحلیل‌گر رسانه‌ای هوشمند هستی که وظیفه',
+      ],
+      'prompt_page_narrative': [
+        'تو یک تحلیل‌گر ارشد رسانه‌ای هستی که برای پنل ۳۶۰°',
+        'تو یک تحلیل‌گر رسانه‌ای هستی. توصیف جامع',
+      ],
+      'prompt_alert_generation': [
+        'تو یک تحلیل‌گر استراتژیک رسانه‌ای هستی که در سیستم پایش',
+        'تو یک تحلیل‌گر استراتژیک رسانه‌ای هستی. بر اساس دیتای زیر',
+      ],
+      'prompt_report_generation': [
+        'تو یک تحلیل‌گر ارشد رسانه‌ای هستی که گزارش‌های دوره‌ای',
+        'تو یک تحلیل‌گر ارشد رسانه‌ای هستی. بر اساس دیتای زیر',
+      ],
+      'prompt_ai_synthesizer': [
+        'بر اساس اطلاعات زیر، یک جمله کوتاه و تاثیرگذار',
+        'بر اساس اطلاعات زیر، یک جمله کوتاه و تاثیرگذار (حداکثر',
+      ],
+      'prompt_ocr': [
+        'Extract ALL visible text from this image exactly as written',
+        'Extract all visible text from this image',
+      ],
     };
 
-    for (const [key, oldPrefix] of Object.entries(OLD_DEFAULTS_PREFIXES)) {
+    for (const [key, prefixes] of Object.entries(OLD_DEFAULTS_PREFIXES)) {
       const setting = await this.repo.findOne({ where: { key } });
-      if (setting && setting.value && setting.value.startsWith(oldPrefix)) {
-        // Old default detected — clear it so the new code default takes effect
-        setting.value = '';
-        await this.repo.save(setting);
-        console.log(`🔄 Migrated prompt "${key}" — cleared old default so new code default applies`);
+      if (setting && setting.value) {
+        const isOldDefault = prefixes.some(prefix => setting.value.startsWith(prefix));
+        if (isOldDefault) {
+          setting.value = '';
+          await this.repo.save(setting);
+          console.log(`🔄 Migrated prompt "${key}" — cleared old default so new code default applies`);
+        }
       }
     }
   }
