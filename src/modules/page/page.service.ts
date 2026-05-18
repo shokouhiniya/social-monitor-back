@@ -119,7 +119,7 @@ export class PageService {
           messages: [{
             role: 'user',
             content: [
-              { type: 'text', text: ocrPrompt || 'Extract ALL visible text from this image exactly as written. Include every line of text overlays, captions, watermarks, subtitles, and any text in screenshots. Preserve line breaks. Return ONLY the extracted text, nothing else. If there is no text in the image, return exactly: NO_TEXT' },
+              { type: 'text', text: ocrPrompt || 'Extract all visible text from the image exactly as it appears. Return only the extracted text. Do not add explanations. Do not describe the image. Do not translate. Do not summarize. Do not correct spelling. Do not normalize punctuation. Include all visible text from: text overlays, captions, subtitles, screenshots, watermarks, usernames, handles, hashtags, dates, numbers, signs, labels, logos with readable text, comments or chat bubbles. Preserve the original language. Preserve line breaks. Preserve reading order. If a word is unclear, write [unclear]. If a whole line is unreadable, write [unreadable line]. If there is no visible readable text in the image, return exactly: NO_TEXT' },
               { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
             ],
           }],
@@ -628,9 +628,10 @@ export class PageService {
     const ageKeys = Object.keys(AGE_RANGES).join(', ');
     const religionKeys = Object.keys(RELIGIONS).join(', ');
 
-    const prompt = `${systemPrompt || 'تو یک تحلیل‌گر رسانه‌ای هوشمند هستی. اطلاعات زیر مربوط به یک پیج اینستاگرامی است. لطفاً تحلیل کامل ارائه بده.'}
+    const prompt = `${systemPrompt || 'تو یک تحلیل‌گر ارشد رسانه‌ای، شبکه‌های اجتماعی و عملیات روایت هستی. اطلاعات زیر مربوط به یک صفحه/کانال/اکانت اجتماعی است. این تحلیل برای سامانه پایش و هدایت راهبردی شبکه‌های اجتماعی استفاده می‌شود. خروجی تو باید دقیق، محافظه‌کارانه، قابل اتکا، قابل استفاده در داشبورد و قابل ذخیره در دیتابیس باشد. فقط و فقط JSON معتبر برگردان. هیچ متن اضافه، markdown، توضیح، کامنت یا عبارت قبل و بعد از JSON ننویس.'}
 
-اطلاعات پیج:
+---
+## اطلاعات پیج
 - نام: ${page.name}
 - یوزرنیم: @${page.username}
 - پلتفرم: ${page.platform}
@@ -648,69 +649,25 @@ export class PageService {
 آخرین پست‌ها:
 ${postsText || 'پستی ثبت نشده'}
 ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : ''}
+---
+## دسته‌بندی‌های مجاز
 
-⚠️ مهم - ترجمه فارسی: اگر متن پستی به زبانی غیر از فارسی نوشته شده (مثلاً عربی، انگلیسی، عبری و غیره)، حتماً ترجمه فارسی آن را در فیلد "caption_fa" قرار بده. اگر پست به فارسی است، فیلد caption_fa را null بگذار.
-
-⚠️ مهم - رونوشت ویدیو: برخی پست‌ها دارای رونوشت صوتی/تصویری هستند (با برچسب [رونوشت صوتی/تصویری] مشخص شده). این متن از صدای ویدیو استخراج شده و باید در تحلیل احساسات، موضوعات و کلمات کلیدی آن پست لحاظ شود. اگر رونوشت به زبانی غیر از فارسی است، ترجمه فارسی آن را در فیلد "transcription_fa" قرار بده.
-
-⚠️ مهم - متن روی تصویر: برخی پست‌ها دارای متن استخراج‌شده از تصویر هستند (با برچسب [متن روی تصویر] مشخص شده). این متن از روی عکس پست خوانده شده و باید در تحلیل احساسات، موضوعات و کلمات کلیدی آن پست لحاظ شود. اگر متن روی تصویر به زبانی غیر از فارسی است، ترجمه فارسی آن را در فیلد "ocr_text_fa" قرار بده.
-
-⚠️ مهم - تحلیل جامع: تمام منابع متنی یک پست (کپشن، رونوشت صوتی، متن روی تصویر، توضیح دستی) باید در تحلیل احساسات، موضوعات و کلمات کلیدی آن پست لحاظ شوند. هر منبع به یک اندازه مهم است. توضیح دستی (با برچسب [توضیح دستی]) توسط تحلیل‌گر انسانی نوشته شده و شامل اطلاعاتی است که فقط با دیدن ویدیو یا تفسیر تصویر قابل درک است.
-
-📚 خوشه‌های موضوعی مجاز برای فیلد "category" (دقیقاً یکی از این کلیدها را انتخاب کن — اگر هیچ‌کدام دقیق نیست نزدیک‌ترین را بزن):
+📚 خوشه‌های موضوعی مجاز برای فیلد "category" (دقیقاً یکی از این کلیدها):
 ${topicalList}
 
-🆔 دسته‌بندی هویتی مجاز برای فیلد "identity_category" (کیستی صاحب صفحه — دقیقاً یکی از این کلیدها):
+🆔 دسته‌بندی هویتی مجاز برای فیلد "identity_category" (دقیقاً یکی از این کلیدها):
 ${identityList}
 
-⛪ دین/مذهب مجاز برای فیلد "religion" (یکی از: ${religionKeys}). اگر مشخص نیست unknown بگذار.
-
+⛪ دین/مذهب مجاز برای فیلد "religion" (یکی از: ${religionKeys}). اگر مشخص نیست unknown.
 👤 جنسیت مجاز برای فیلد "gender" (یکی از: ${genderKeys}). برای تیم‌ها/برندها mixed و اگر نامعلوم unknown.
-
 🎂 رده‌سنی مجاز برای فیلد "age_range" (یکی از: ${ageKeys}). اگر تعیین دقیق ممکن نیست unknown.
 
-🌍 قانون «زبان تولیدی»: زبان غالب پست‌ها را در فیلد "content_language" بنویس (مثل: فارسی، عربی، انگلیسی...). اگر هیچ زبانی بیش از ۸۰٪ محتوا نیست، مقدار "چندزبانه" را برگردان.
-
-🚩 شاخص همسویی (alignment_score از ۰ تا ۱۰): چقدر این پیج با محور زیر هم‌راستاست؟
-${alignmentList}
-۰ یعنی کاملاً ضد، ۵ یعنی خنثی، ۱۰ یعنی کاملاً هم‌راستا.
-
-🤝 شاخص همراهی (affinity_score از ۰ تا ۱۰): مخاطب چقدر با صفحه ارتباط واقعی دارد؟ بر اساس وفاداری مخاطب، احساس تعلق، عمق کامنت‌ها، نرخ مشارکت فعال و ارتباط انسانی ادمین. ۰ یعنی فقط بیننده، ۱۰ یعنی کامیونیتی واقعی.
-
-🗂️ تخصیص خوشه (cluster_id): این پیج باید به یکی از خوشه‌های مدیریتی زیر اختصاص یابد. شناسه (id) خوشه‌ای که بیشترین تطابق را با موضوع و هویت پیج دارد، در فیلد "cluster_id" قرار بده. اگر هیچ خوشه‌ای کاملاً مناسب نیست، null بگذار.
+🗂️ خوشه‌های مدیریتی (cluster_id — عدد id یکی از اینها یا null):
 ${clustersList}
 
-لطفاً خروجی را دقیقاً به فرمت JSON زیر برگردان (بدون هیچ متن اضافه):
-{
-  "category": "یکی از کلیدهای خوشه موضوعی مجاز",
-  "identity_category": "یکی از کلیدهای دسته هویتی مجاز",
-  "cluster": "نام خوشه معنایی کوتاه (مثلاً: رسانه مقاومت، لایف‌استایل، رسانه بین‌المللی)",
-  "cluster_id": عدد id یکی از خوشه‌های مدیریتی بالا یا null,
-  "credibility_score": عدد از 0 تا 10,
-  "influence_score": عدد از 0 تا 10,
-  "consistency_rate": عدد از 0 تا 10,
-  "affinity_score": عدد از 0 تا 10,
-  "alignment_score": عدد از 0 تا 10,
-  "religion": "یکی از کلیدهای مذهب مجاز",
-  "gender": "یکی از کلیدهای جنسیت مجاز",
-  "age_range": "یکی از کلیدهای رده سنی مجاز",
-  "nationality": "ملیت صاحب پیج به فارسی (مثلاً: ایرانی، عربی، ترک، آمریکایی...)",
-  "content_language": "زبان غالب پست‌ها (یا چندزبانه)",
-  "persona_radar": {
-    "aggressive_defensive": عدد 0 تا 100,
-    "producer_resharer": عدد 0 تا 100,
-    "visual_textual": عدد 0 تا 100,
-    "formal_informal": عدد 0 تا 100,
-    "local_global": عدد 0 تا 100,
-    "interactive_oneway": عدد 0 تا 100
-  },
-  "pain_points": ["دغدغه ۱", "دغدغه ۲", "دغدغه ۳"],
-  "keywords": ["کلمه ۱", "کلمه ۲", "کلمه ۳", "کلمه ۴", "کلمه ۵"],
-  "language": "زبان اصلی محتوا",
-  "posts_analysis": [
-    {"post_id": عدد id پست, "sentiment_score": عدد -1 تا 1, "sentiment_label": "angry/hopeful/neutral/sad", "caption_fa": "ترجمه فارسی (فقط برای پست‌های غیرفارسی، در غیر این صورت null)", "transcription_fa": "ترجمه فارسی رونوشت صوتی (فقط اگر رونوشت به زبان غیرفارسی باشد، در غیر این صورت null)", "ocr_text_fa": "ترجمه فارسی متن روی تصویر (فقط اگر متن به زبان غیرفارسی باشد، در غیر این صورت null)", "topics": ["موضوع۱"], "keywords": ["کلمه۱"]}
-  ]
-}`;
+🚩 معیارهای همسویی (alignment_score):
+${alignmentList}
+`;
 
     if (enabledServices.has('analysis') || enabledServices.has('translation')) {
     try {
@@ -764,6 +721,16 @@ ${clustersList}
           updateData.cluster_id = validClusterId;
         }
       }
+      // Fallback: if LLM didn't assign cluster_id but we have a category, match by label
+      if (!updateData.cluster_id && analysis.category && managedClusters.length > 0) {
+        const categoryLabel = TOPICAL_CLUSTERS[analysis.category]?.label;
+        if (categoryLabel) {
+          const matchedCluster = managedClusters.find((c) => c.name === categoryLabel);
+          if (matchedCluster) {
+            updateData.cluster_id = matchedCluster.id;
+          }
+        }
+      }
       if (analysis.credibility_score !== undefined) updateData.credibility_score = analysis.credibility_score;
       if (analysis.influence_score !== undefined) updateData.influence_score = analysis.influence_score;
       if (analysis.consistency_rate !== undefined) updateData.consistency_rate = analysis.consistency_rate;
@@ -802,8 +769,16 @@ ${clustersList}
           }
 
           if (post) {
-            post.sentiment_score = pa.sentiment_score;
-            post.sentiment_label = pa.sentiment_label;
+            // Support both new format (sentiment: string) and legacy (sentiment_score + sentiment_label)
+            if (pa.sentiment !== undefined) {
+              // New format: sentiment is a string like positive/negative/neutral/mixed/unknown
+              const sentimentMap: Record<string, number> = { positive: 0.7, negative: -0.7, neutral: 0, mixed: 0, unknown: 0 };
+              post.sentiment_score = sentimentMap[pa.sentiment] ?? 0;
+              post.sentiment_label = pa.sentiment === 'positive' ? 'hopeful' : pa.sentiment === 'negative' ? 'angry' : 'neutral';
+            } else {
+              post.sentiment_score = pa.sentiment_score ?? 0;
+              post.sentiment_label = pa.sentiment_label || 'neutral';
+            }
             post.extracted_topics = pa.topics || [];
             post.extracted_keywords = pa.keywords || [];
             if (pa.caption_fa) {
@@ -958,7 +933,10 @@ ${clustersList}
       this.settingsService.get('llm_model'),
     ]);
 
-    const prompt = `${systemPrompt || 'تو یک تحلیل‌گر رسانه‌ای هستی. توصیف جامع از پیج ارائه بده.'}
+    const prompt = `${systemPrompt || 'تو یک تحلیل‌گر ارشد رسانه‌ای، شبکه‌های اجتماعی و عملیات روایت هستی. وظیفه تو تولید «پنل ۳۶۰ درجه بصیرت» برای یک صفحه/کانال/اکانت اجتماعی است. این خروجی برای نمایش در داشبورد مدیریتی استفاده می‌شود؛ بنابراین باید دقیق، خوانا، راهبردی، قابل اعتماد و قابل استفاده برای تصمیم‌گیری باشد. فقط و فقط JSON معتبر برگردان. هیچ متن اضافه، markdown، توضیح، کامنت یا عبارت قبل و بعد از JSON ننویس.'}
+
+---
+## داده ورودی
 
 اطلاعات پیج:
 - نام: ${page.name}
@@ -986,20 +964,23 @@ ${clustersList}
 ${posts.length} پست انتهایی:
 ${postLines}
 ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : ''}
-خروجی را دقیقاً به فرمت JSON زیر برگردان (بدون متن اضافه قبل یا بعدش):
+---
+## ساختار خروجی الزامی
+
+خروجی باید دقیقاً این ساختار JSON را داشته باشد:
 {
-  "narrative_description": "توصیف ۲۰۰ تا ۳۰۰ کلمه‌ای فارسی، پیوسته و خوانا",
+  "narrative_description": "متن فارسی ۲۰۰ تا ۳۰۰ کلمه‌ای پیوسته و خوانا",
   "topic_distribution": [
-    {"topic": "نام موضوع به فارسی", "min_percent": 40, "max_percent": 45}
+    {"topic": "نام موضوع فارسی", "min_percent": 0, "max_percent": 0}
   ],
-  "audience_description": "یک پاراگراف ۸۰ تا ۱۲۰ کلمه‌ای درباره مخاطب",
-  "engagement_suggestion": "یک پاراگراف ۸۰ تا ۱۲۰ کلمه‌ای پیشنهاد تعامل به فارسی",
+  "audience_description": "متن فارسی ۸۰ تا ۱۲۰ کلمه‌ای",
+  "engagement_suggestion": "متن فارسی ۸۰ تا ۱۲۰ کلمه‌ای",
   "engagement_suggestion_translations": {
-    "en": "ترجمه طبیعی به انگلیسی",
-    "ar": "ترجمه طبیعی به عربی",
-    "es": "ترجمه طبیعی به اسپانیولی",
-    "tr": "ترجمه طبیعی به ترکی استانبولی",
-    "ur": "ترجمه طبیعی به اردو"
+    "en": "",
+    "ar": "",
+    "es": "",
+    "tr": "",
+    "ur": ""
   }
 }`;
 
