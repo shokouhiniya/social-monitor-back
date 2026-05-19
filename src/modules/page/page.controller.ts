@@ -1,11 +1,15 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { PageService } from './page.service';
+import { BatchRefreshService } from './batch-refresh.service';
 import { CreatePageDto, UpdatePageDto, PageQueryDto } from './page.dto';
 import { getProgress, getAllRunning } from './page-progress';
 
 @Controller('pages')
 export class PageController {
-  constructor(private readonly pageService: PageService) {}
+  constructor(
+    private readonly pageService: PageService,
+    private readonly batchRefreshService: BatchRefreshService,
+  ) {}
 
   @Get()
   findAll(@Query() query: PageQueryDto) {
@@ -45,6 +49,27 @@ export class PageController {
   @Get('batch-status')
   getBatchStatus() {
     return getAllRunning();
+  }
+
+  @Post('batch-refresh')
+  startBatchRefresh(
+    @Body() body: { pageIds: number[]; steps?: { fetch?: boolean; process?: boolean; dashboards?: boolean }; scope?: string },
+  ) {
+    return this.batchRefreshService.start(
+      body.pageIds || [],
+      body.steps || { fetch: true, process: true, dashboards: true },
+      body.scope || 'all',
+    );
+  }
+
+  @Get('batch-refresh/status')
+  getBatchRefreshStatus() {
+    return this.batchRefreshService.getStatus();
+  }
+
+  @Post('batch-refresh/cancel')
+  cancelBatchRefresh() {
+    return this.batchRefreshService.cancel();
   }
 
   @Get(':id/progress')

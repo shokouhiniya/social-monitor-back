@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import axios from 'axios';
@@ -15,6 +15,7 @@ export class AnalyticsService {
   private cachedAlerts: any = null;
 
   constructor(
+    @Inject(forwardRef(() => PageService))
     private readonly pageService: PageService,
     private readonly postService: PostService,
     private readonly settingsService: SettingsService,
