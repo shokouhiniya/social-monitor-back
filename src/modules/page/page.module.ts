@@ -11,6 +11,10 @@ import { BatchRefreshService } from './batch-refresh.service';
 import { SettingsModule } from '../settings/settings.module';
 import { TranscriptionModule } from '../transcription/transcription.module';
 import { AnalyticsModule } from '../analytics/analytics.module';
+// سازگاری دورهٔ گذار (Requirement 2.9): مسیرهای legacy `/pages` به‌تدریج به
+// SourcesService واگذار می‌شوند. SourcesModule به PageModule وابسته نیست،
+// بنابراین این import بدون forwardRef و بدون ایجاد دور (acyclic) است.
+import { SourcesModule } from '../../sources/sources.module';
 
 @Module({
   imports: [
@@ -18,6 +22,7 @@ import { AnalyticsModule } from '../analytics/analytics.module';
     SettingsModule,
     TranscriptionModule,
     forwardRef(() => AnalyticsModule),
+    SourcesModule,
   ],
   controllers: [PageController],
   providers: [PageService, BatchRefreshService],

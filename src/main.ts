@@ -16,8 +16,15 @@ async function bootstrap() {
   // Serve downloaded media files (images, videos from crawling)
   app.useStaticAssets(join(__dirname, '..', 'public'), { prefix: '/static/' });
 
+  // ValidationPipe سراسری (Requirement 12.4 / design §11.1):
+  //  - whitelist: true  → ویژگی‌های غیرمجاز (خارج از DTO) حذف می‌شوند.
+  //  - transform: true  → payload به نمونهٔ DTO تبدیل و انواع پایه coerce می‌شوند.
+  // خطای اعتبارسنجی به‌صورت BadRequestException با آرایهٔ پیام‌ها پرتاب می‌شود و
+  // از طریق AllExceptionsFilter (گام ۱.۳) به کد نمادین VALIDATION_ERROR با
+  // details فیلد‌محور (details.messages) نگاشت می‌گردد.
   app.useGlobalPipes(
     new ValidationPipe({
+      whitelist: true,
       transform: true,
     }),
   );

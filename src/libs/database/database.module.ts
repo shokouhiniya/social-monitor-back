@@ -19,7 +19,12 @@ import { ConfigModule } from '../config/config.module'; // relative import
           password: dbConfig.password,
           database: dbConfig.name,
           autoLoadEntities: dbConfig.autoLoadEntities,
-          synchronize: dbConfig.synchronize, // Comment on production
+          // همیشه false (Req 13.1) — تغییر schema تنها از طریق migration.
+          synchronize: dbConfig.synchronize,
+          logging: dbConfig.logging,
+          // migrationها به‌صورت دستی از طریق CLI اجرا می‌شوند (migrationsRun=false).
+          migrations: [__dirname + '/../../database/migrations/*.{ts,js}'],
+          migrationsRun: false,
           retryAttempts: 3,
           retryDelay: 3000,
           keepConnectionAlive: true,

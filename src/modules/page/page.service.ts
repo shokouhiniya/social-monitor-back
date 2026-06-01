@@ -12,6 +12,7 @@ import { Cluster } from '../cluster/cluster.entity';
 import { CreatePageDto, UpdatePageDto, PageQueryDto } from './page.dto';
 import { SettingsService } from '../settings/settings.service';
 import { TranscriptionService } from '../transcription/transcription.service';
+import { SourcesService } from '../../sources/sources.service';
 import { startProgress, updateProgress, completeProgress, failProgress, isRunning, getAllRunning } from './page-progress';
 import { TOPICAL_CLUSTERS, IDENTITY_CATEGORIES, GENDERS, AGE_RANGES, RELIGIONS } from './page.constants';
 
@@ -30,6 +31,12 @@ export class PageService {
     private clusterRepository: Repository<Cluster>,
     private readonly settingsService: SettingsService,
     private readonly transcriptionService: TranscriptionService,
+    // سازگاری دورهٔ گذار (Requirement 2.9): SourcesService مالک عملیات منبع است؛
+    // PageService در عملیاتی که SourcesService آن‌ها را owns می‌کند، به آن
+    // delegate می‌کند. عملیات سنگین legacy (fetch/process با fetch/LLM واقعی) تا
+    // wire شدن کامل Collection/Analysis (تسک ۵.۱۱) روی مسیر legacy باقی می‌مانند
+    // تا قابلیتی از دست نرود (انتقال غیرتخریبی).
+    private readonly sourcesService: SourcesService,
   ) {}
 
   /**
@@ -1069,7 +1076,12 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
     await this.fieldReportRepository.delete({ page_id: id });
     await this.postRepository.delete({ page_id: id });
 
-    return await this.pageRepository.remove(page);
+    // سازگاری دورهٔ گذار (Requirement 2.9): حذف خودِ موجودیت منبع به
+    // SourcesService (مالک منابع) واگذار می‌شود. پاک‌سازی رکوردهای وابسته
+    // (FK) همچنان اینجا انجام می‌شود چون به repository های همین ماژول legacy
+    // نیاز دارد و هنوز به SourcesService منتقل نشده است.
+    await this.sourcesService.remove(id);
+    return page;
   }
 
   // --- Analytics helpers ---

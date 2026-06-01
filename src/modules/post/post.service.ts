@@ -8,6 +8,7 @@ import { Post } from './post.entity';
 import { CreatePostDto, PostQueryDto } from './post.dto';
 import { TranscriptionService } from '../transcription/transcription.service';
 import { SettingsService } from '../settings/settings.service';
+import { ContentService } from '../../content/content.service';
 
 @Injectable()
 export class PostService {
@@ -16,6 +17,12 @@ export class PostService {
     private postRepository: Repository<Post>,
     private readonly transcriptionService: TranscriptionService,
     private readonly settingsService: SettingsService,
+    // سازگاری دورهٔ گذار (Requirement 3.6): ContentService مالک عملیات محتوا است؛
+    // PostService در عملیاتی که ContentService آن‌ها را owns می‌کند (ثبت زمینهٔ
+    // دستی) به آن delegate می‌کند. عملیات سنگین legacy (fetch/OCR/LLM واقعی) تا
+    // wire شدن کامل Collection/Analysis (تسک‌های ۳.۱۰/۵.۸/۵.۱۱) روی مسیر legacy
+    // باقی می‌مانند تا قابلیتی از دست نرود (انتقال غیرتخریبی).
+    private readonly contentService: ContentService,
   ) {}
 
   async findAll(query: PostQueryDto) {
@@ -65,9 +72,10 @@ export class PostService {
   }
 
   async updateManualContext(id: number, manualContext: string) {
-    const post = await this.findById(id);
-    post.manual_context = manualContext || null;
-    return await this.postRepository.save(post);
+    // سازگاری دورهٔ گذار (Requirement 3.6): ثبت زمینهٔ دستی به ContentService
+    // (مالک محتوا) واگذار می‌شود. رفتار یکسان است (یافتن محتوا، تنظیم
+    // `manual_context` با نگاشت مقدار خالی به null، و persist).
+    return await this.contentService.updateContext(id, manualContext);
   }
 
   /**

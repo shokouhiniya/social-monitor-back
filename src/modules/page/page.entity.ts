@@ -71,6 +71,16 @@ export class Page {
   @Column({ nullable: true })
   profile_image_url: string;
 
+  // Canonical profile URL of the source (added as nullable column in the
+  // Phase 2 migration Phase2NetworksActors). Distinct from profile_image_url.
+  @Column({ nullable: true })
+  profile_url: string;
+
+  // Operational network this source belongs to (added as nullable column in the
+  // Phase 2 migration Phase2NetworksActors; FK → networks.id, ON DELETE SET NULL).
+  @Column({ type: 'int', nullable: true })
+  network_id: number | null;
+
   @Column({ nullable: true })
   cluster: string; // semantic cluster label (free text label from LLM)
 
