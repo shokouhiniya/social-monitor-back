@@ -54,13 +54,13 @@ export class PromptVersion {
   @Column({ type: 'text', nullable: true })
   extra_instructions: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   model: string | null;
 
   @Column({ type: 'double precision', nullable: true })
   temperature: number | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   response_format: PromptResponseFormat | null;
 
   @Column({ type: 'int', nullable: true })

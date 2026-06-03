@@ -31,10 +31,10 @@ export class AnalysisRunEntity {
   @Column()
   type: AnalysisRunType;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   scope_ref: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   timeframe: string | null;
 
   @Column()

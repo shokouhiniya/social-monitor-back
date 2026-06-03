@@ -29,13 +29,25 @@ async function bootstrap() {
     }),
   );
 
-  await app.listen(process.env.PORT ?? 3000, process.env.HOST ?? 'localhost');
+  // در محیط کانتینری/پروداکشن سرور باید روی `0.0.0.0` گوش دهد تا پراکسی معکوس
+  // (Traefik/Nginx در Coolify) بتواند از بیرون کانتینر به آن برسد. بایند شدن روی
+  // `localhost` داخل کانتینر باعث می‌شود پراکسی نتواند وصل شود و کلاینت خطای
+  // «502 Bad Gateway» بگیرد (که در مرورگر به‌شکل خطای CORS دیده می‌شود).
+  const host =
+    process.env.HOST ||
+    (process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost');
+  const port = process.env.PORT ?? 3000;
+
+  await app.listen(port, host);
 }
 
 bootstrap()
   .then(() => {
     console.log(
-      `Server is running on http://${process.env.HOST ?? 'localhost'}:${process.env.PORT ?? 3000}`,
+      `Server is running on http://${
+        process.env.HOST ||
+        (process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost')
+      }:${process.env.PORT ?? 3000}`,
     );
   })
   .catch((err) => {

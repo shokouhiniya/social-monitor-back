@@ -33,7 +33,7 @@ export class SourceInsightResultEntity {
   @Column({ type: 'int', nullable: true })
   prompt_version_id: number | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   model: string | null;
 
   @Column({ type: 'text', nullable: true })

@@ -45,10 +45,10 @@ export class PromptDefinition {
   @Column({ type: 'text', nullable: true })
   description: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   category: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   default_model: string | null;
 
   @Column({ type: 'jsonb', nullable: true })

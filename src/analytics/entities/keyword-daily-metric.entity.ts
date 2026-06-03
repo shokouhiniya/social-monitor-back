@@ -36,7 +36,7 @@ export class KeywordDailyMetricEntity {
   @Column({ type: 'date' })
   date: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   scope: string | null;
 
   @Column({ type: 'int', default: 0 })

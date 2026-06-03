@@ -36,7 +36,7 @@ export class JobEntity {
   @Column()
   status: JobStatus;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   scope: string | null;
 
   @Column({ type: 'jsonb', nullable: true })

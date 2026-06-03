@@ -32,7 +32,11 @@ export const getDatabaseConfig = (): DatabaseConfig => ({
   port: parseInt(process.env.DB_PORT || '5432', 10),
   username: process.env.DB_USERNAME || 'postgres',
   password: process.env.DB_PASSWORD || 'secret',
-  name: process.env.DB_NAME || 'postgres',
+  // هم `DB_NAME` و هم `DB_DATABASE` پذیرفته می‌شوند: استقرار (docker-compose و
+  // Coolify) متغیر `DB_DATABASE` را ست می‌کند، اما کد قدیمی `DB_NAME` را
+  // می‌خواند. پذیرش هر دو از افتادن نام دیتابیس روی پیش‌فرض اشتباه `'postgres'`
+  // جلوگیری می‌کند (که باعث «column ... does not exist» می‌شود).
+  name: process.env.DB_NAME || process.env.DB_DATABASE || 'postgres',
   // هرگز true نشود — همهٔ محیط‌ها (شامل staging) فقط با migration کار می‌کنند.
   synchronize: false,
   autoLoadEntities:

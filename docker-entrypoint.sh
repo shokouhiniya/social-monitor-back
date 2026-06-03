@@ -7,8 +7,12 @@ echo "🚀 Starting Social Monitor Backend..."
 echo "⏳ Waiting for database..."
 sleep 5
 
-# Run database migrations (if you have any)
-# npm run migration:run
+# Run database migrations (schema changes are applied ONLY via migrations —
+# synchronize is always false). This runs the compiled migrations against the
+# production DB so new tables/columns (e.g. pages.profile_url, users.username,
+# prompt/ai/jobs/analytics tables) exist before the app boots.
+echo "🧱 Running database migrations..."
+npm run migration:run:prod
 
 # Run seed data
 echo "🌱 Running seed data..."

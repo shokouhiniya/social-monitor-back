@@ -32,10 +32,10 @@ export class AuditLog {
   @Column()
   action: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   entity_type: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   entity_id: string | null;
 
   @Column({ type: 'jsonb', nullable: true })

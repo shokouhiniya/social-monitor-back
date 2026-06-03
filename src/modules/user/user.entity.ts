@@ -30,11 +30,14 @@ export class User {
   role: string;
 
   /** نام کاربری برای login (nullable برای سازگاری با رکوردهای legacy). */
-  @Column({ nullable: true })
+  // نوع ستون صریح (`varchar`) لازم است: چون نوع TypeScript `string | null` است،
+  // reflect-metadata نوع را `Object` گزارش می‌کند و TypeORM بدون `type` صریح با
+  // خطای DataTypeNotSupportedError هنگام بوت کرش می‌کند.
+  @Column({ type: 'varchar', nullable: true })
   username: string | null;
 
   /** هش رمز عبور (هرگز خود رمز ذخیره نمی‌شود). nullable برای رکوردهای legacy. */
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   password_hash: string | null;
 
   @Column({ default: true })

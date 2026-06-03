@@ -37,13 +37,13 @@ export class ContentAnalysisResultEntity {
   @Column({ type: 'int', nullable: true })
   prompt_version_id: number | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   model: string | null;
 
   @Column({ type: 'double precision', nullable: true })
   sentiment_score: number | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   sentiment_label: string | null;
 
   @Column({ type: 'text', nullable: true })
@@ -61,16 +61,16 @@ export class ContentAnalysisResultEntity {
   @Column({ type: 'boolean', nullable: true })
   is_relevant: boolean | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   coverage_type: string | null;
 
   @Column({ type: 'text', nullable: true })
   narrative_position: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   risk_level: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   recommended_attention: string | null;
 
   @CreateDateColumn({ type: 'timestamp', default: () => 'now()' })

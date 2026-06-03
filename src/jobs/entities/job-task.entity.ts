@@ -42,7 +42,7 @@ export class JobTaskEntity {
   @Column()
   type: JobTaskType;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   target_ref: string | null;
 
   @Index('IDX_job_tasks_status')

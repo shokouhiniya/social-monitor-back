@@ -44,13 +44,13 @@ export class AiExecutionLog {
   @Column({ type: 'int', nullable: true })
   prompt_version_id: number | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   model: string | null;
 
   @Column({ type: 'text', nullable: true })
   input_summary: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   input_hash: string | null;
 
   @Column({ type: 'text', nullable: true })
@@ -77,10 +77,10 @@ export class AiExecutionLog {
   @Column({ type: 'double precision', nullable: true })
   cost_estimate: number | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   entity_type: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   entity_id: string | null;
 
   @Index('IDX_ai_execution_logs_created_at')
