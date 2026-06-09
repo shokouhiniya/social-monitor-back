@@ -258,6 +258,39 @@ export class MicroMediaService {
     return this.pageRepo.find({ where: { micro_media_id: microMediaId } });
   }
 
+  /**
+   * ساخت یک سکوی (page) جدید برای میکرورسانهٔ موجود و اتصال آن.
+   * بر خلاف attachAccount (که page موجود را وصل می‌کند)، این متد یک حساب پلتفرمی
+   * تازه می‌سازد.
+   */
+  async createAccount(
+    microMediaId: number,
+    dto: CreateInlineAccountDto,
+  ): Promise<Page> {
+    await this.findById(microMediaId);
+    const username = (dto.username ?? '').trim();
+    const name = (dto.name ?? '').trim() || username;
+    if (!username && !name) {
+      throw new DomainException(
+        ERROR_CODES.VALIDATION_ERROR,
+        'نام یا نام کاربری سکو الزامی است',
+      );
+    }
+    const existingCount = await this.pageRepo.count({
+      where: { micro_media_id: microMediaId },
+    });
+    const page = this.pageRepo.create({
+      name,
+      username: username || undefined,
+      platform: dto.platform || undefined,
+      profile_url: dto.profile_url || undefined,
+      followers_count: dto.followers_count ?? 0,
+      micro_media_id: microMediaId,
+      is_primary: dto.is_primary ?? existingCount === 0,
+    });
+    return this.pageRepo.save(page);
+  }
+
   /** اتصال یک page موجود به این میکرورسانه (یا انتقال از میکرورسانهٔ دیگر). */
   async attachAccount(
     microMediaId: number,

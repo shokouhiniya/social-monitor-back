@@ -16,6 +16,7 @@ import { MediaScoreService } from '../media-score/media-score.service';
 import { InteractionsV2Service } from './interactions-v2.service';
 import {
   AssignAccountDto,
+  CreateInlineAccountDto,
   CreateMicroMediaDto,
   CreatePerformanceSnapshotDto,
   MicroMediaListQueryDto,
@@ -95,6 +96,14 @@ export class MicroMediaController {
     @Body() dto: AssignAccountDto,
   ) {
     return this.mediaService.attachAccount(id, dto);
+  }
+
+  @Post(':id/accounts/create')
+  createAccount(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateInlineAccountDto,
+  ) {
+    return this.mediaService.createAccount(id, dto);
   }
 
   @Delete('accounts/:pageId')
