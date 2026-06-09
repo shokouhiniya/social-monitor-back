@@ -13,6 +13,7 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "seed": "node dist/seed",
+    "seed:users": "node dist/seed-users",
     "typeorm": "typeorm-ts-node-commonjs -d src/database/data-source.ts",
     "typeorm:prod": "typeorm -d dist/database/data-source.js",
     "migration:generate": "npm run typeorm -- migration:generate",

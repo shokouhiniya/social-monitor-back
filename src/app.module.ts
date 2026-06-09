@@ -34,6 +34,14 @@ import { JobsModule } from './jobs/jobs.module';
 import { AuthV2Module } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { AuditModule } from './audit/audit.module';
+// --- micromedia-transformation فاز ۱ — ماژول‌های محصول جدید ---
+import { HubsModule } from './hubs/hubs.module';
+import { MicroMediaModule } from './micro-media/micro-media.module';
+import { MediaScoreModule } from './media-score/media-score.module';
+import { TasksModule } from './tasks/tasks.module';
+import { CampaignsModule } from './campaigns/campaigns.module';
+import { ManagementDashboardsModule } from './management-dashboards/management-dashboards.module';
+import { AccessModule } from './access/access.module';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 // ساختار جدید common/ (دورهٔ گذار — Requirement 1.6): interceptor و filter سراسری
 // از لایهٔ مشترک جدید استفاده می‌شوند تا Response Envelope یکدست تولید شود.
@@ -100,6 +108,17 @@ import { AllExceptionsFilter } from './common/filters';
     UsersModule,
     AuthV2Module,
     AuditModule,
+    // --- micromedia-transformation فاز ۱ — لایهٔ محصول مدیریت میکرورسانه ---
+    // واحد مرکزی جدید MicroMedia + Hub + MediaScore + Tasks + Campaigns. کنار
+    // ساختار موجود (افزایشی و غیرتخریبی) ثبت می‌شوند؛ مسیر کمپین‌ها `/campaigns`
+    // (تداخل صفر با `/operations/*` legacy — تصمیم ۴).
+    HubsModule,
+    MediaScoreModule,
+    MicroMediaModule,
+    TasksModule,
+    CampaignsModule,
+    ManagementDashboardsModule,
+    AccessModule,
   ],
   controllers: [AppController],
   providers: [

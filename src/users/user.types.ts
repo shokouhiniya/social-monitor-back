@@ -1,16 +1,42 @@
 import { User } from '../modules/user/user.entity';
 
 /**
- * نقش‌های کاربری سیستم (Requirement 11.3).
+ * نقش‌های کاربری سیستم.
  *
- * هر کاربر دقیقاً یکی از این نقش‌ها را دارد:
- *  - `admin`: دسترسی کامل شامل مدیریت تنظیمات سراسری و Prompt Studio و کاربران.
- *  - `operator`: اجرای جریان‌های عملیاتی (منابع، واکشی، تحلیل، هشدارها، Job ها).
- *  - `viewer`: دسترسی فقط‌خواندنی به داشبوردها و گزارش‌ها.
+ * نقش‌های legacy (دورهٔ گذار، حفظ می‌شوند):
+ *  - `admin`: دسترسی کامل (نگاشت مفهومی به super_admin).
+ *  - `operator`: اجرای جریان‌های عملیاتی.
+ *  - `viewer`: فقط‌خواندنی.
+ *
+ * نقش‌های محصول جدید میکرورسانه (micromedia-transformation §6، تصمیم ۶):
+ *  - `super_admin`: مدیر کل سیستم — همه‌چیز.
+ *  - `operations_manager`: مدیر عملیات — ساخت عملیات و انتخاب رسانه و تعریف تسک.
+ *  - `hub_manager`: مدیر هاب — فقط هاب‌های خودش.
+ *  - `hub_expert`: کارشناس هاب — ثبت score/تعامل و پیگیری تسک در هاب خودش.
  */
-export const USER_ROLES = ['admin', 'operator', 'viewer'] as const;
+export const USER_ROLES = [
+  'admin',
+  'operator',
+  'viewer',
+  'super_admin',
+  'operations_manager',
+  'hub_manager',
+  'hub_expert',
+] as const;
 
 export type UserRole = (typeof USER_ROLES)[number];
+
+/** نقش‌هایی که دسترسی فراگیر دارند (بدون محدودیت scope هاب). */
+export const PRIVILEGED_ROLES: readonly UserRole[] = [
+  'admin',
+  'super_admin',
+  'operations_manager',
+];
+
+/** آیا نقش، فراگیر (بدون محدودیت هاب) است؟ */
+export function isPrivilegedRole(role: UserRole): boolean {
+  return PRIVILEGED_ROLES.includes(role);
+}
 
 /** نقش پیش‌فرض هنگام نبود مقدار صریح. */
 export const DEFAULT_USER_ROLE: UserRole = 'viewer';

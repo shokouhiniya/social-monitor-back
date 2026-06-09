@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from '../modules/user/user.entity';
 import { UsersService } from './users.service';
+import { UsersController } from './users.controller';
 
 /**
  * UsersModule — مدیریت کاربران داخلی (design §5.12).
@@ -17,6 +18,7 @@ import { UsersService } from './users.service';
  */
 @Module({
   imports: [TypeOrmModule.forFeature([User])],
+  controllers: [UsersController],
   providers: [UsersService],
   exports: [UsersService],
 })

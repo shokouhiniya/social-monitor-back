@@ -81,6 +81,20 @@ export class Page {
   @Column({ type: 'int', nullable: true })
   network_id: number | null;
 
+  // MicroMedia ownership (micromedia-transformation §3.3). A page/source is a
+  // "platform account" under one MicroMedia. Added as nullable column in the
+  // AddMicroMediaIdToPages migration; FK → micro_media.id, ON DELETE SET NULL.
+  @Column({ type: 'int', nullable: true })
+  micro_media_id: number | null;
+
+  // Whether this account is the primary platform presence of its MicroMedia.
+  @Column({ type: 'boolean', default: false })
+  is_primary: boolean;
+
+  // Last time performance data for this account was synced.
+  @Column({ type: 'timestamp', nullable: true })
+  last_synced_at: Date | null;
+
   @Column({ nullable: true })
   cluster: string; // semantic cluster label (free text label from LLM)
 

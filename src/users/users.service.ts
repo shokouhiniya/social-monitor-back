@@ -114,6 +114,45 @@ export class UsersService {
   }
 
   /**
+   * فهرست همهٔ کاربران داخلی (SafeUser) برای پنل مدیریت super_admin.
+   */
+  async listUsers(): Promise<SafeUser[]> {
+    const users = await this.userRepository.find({ order: { id: 'ASC' } });
+    return users.map(toSafeUser);
+  }
+
+  /**
+   * به‌روزرسانی نام/نقش/وضعیت فعال یک کاربر (پنل super_admin). نتیجهٔ امن.
+   */
+  async updateUser(
+    id: number,
+    input: { name?: string; role?: UserRole; is_active?: boolean },
+  ): Promise<SafeUser> {
+    const user = await this.userRepository.findOne({ where: { id } });
+    if (!user) {
+      throw new NotFoundException(`کاربری با شناسهٔ ${id} یافت نشد`);
+    }
+    if (input.name !== undefined) user.name = input.name;
+    if (input.role !== undefined) user.role = input.role;
+    if (input.is_active !== undefined) user.is_active = input.is_active;
+    const saved = await this.userRepository.save(user);
+    return toSafeUser(saved);
+  }
+
+  /**
+   * بازنشانی رمز عبور یک کاربر (پنل super_admin). رمز هش‌شده ذخیره می‌شود.
+   */
+  async setPassword(id: number, password: string): Promise<SafeUser> {
+    const user = await this.userRepository.findOne({ where: { id } });
+    if (!user) {
+      throw new NotFoundException(`کاربری با شناسهٔ ${id} یافت نشد`);
+    }
+    user.password_hash = await hashPassword(password);
+    const saved = await this.userRepository.save(user);
+    return toSafeUser(saved);
+  }
+
+  /**
    * تضمین وجود یک کاربر داخلی (idempotent). اگر username وجود داشته باشد همان
    * بازگردانده می‌شود؛ در غیر این صورت ساخته می‌شود. برای seed بوت‌استرپ ادمین
    * استفاده می‌شود.
