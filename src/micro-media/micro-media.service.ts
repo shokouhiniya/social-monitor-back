@@ -145,6 +145,85 @@ export class MicroMediaService {
     return this.mediaRepo.save(media);
   }
 
+  // --- نمایندگان (representatives) ---
+
+  /**
+   * فهرست میکرورسانه‌های یک خوشهٔ موضوعی (بر اساس `topic_cluster_id`)، همراه با
+   * پرچم نماینده. نمایندگان ابتدا و سپس بر اساس نام مرتب می‌شوند.
+   */
+  async listByCluster(clusterId: number): Promise<MicroMediaEntity[]> {
+    return this.mediaRepo.find({
+      where: { topic_cluster_id: clusterId },
+      order: { is_cluster_representative: 'DESC', name: 'ASC' },
+    });
+  }
+
+  /**
+   * فهرست میکرورسانه‌های یک هویت (بر اساس تطبیق `identity_title`)، همراه با
+   * پرچم نماینده. نمایندگان ابتدا و سپس بر اساس نام مرتب می‌شوند.
+   */
+  async listByIdentity(identityTitle: string): Promise<MicroMediaEntity[]> {
+    return this.mediaRepo.find({
+      where: { identity_title: identityTitle },
+      order: { is_identity_representative: 'DESC', name: 'ASC' },
+    });
+  }
+
+  /**
+   * تعیین/لغو نماینده‌بودن یک میکرورسانه برای خوشه یا هویت (مستقل از هم).
+   * فقط flag نمایندگی را toggle می‌کند — خوشه/هویت میکرورسانه را تغییر نمی‌دهد.
+   * میکرورسانه باید قبلاً از طریق edit به آن خوشه/هویت assign شده باشد.
+   */
+  async setRepresentative(
+    id: number,
+    scope: 'cluster' | 'identity',
+    value: boolean,
+  ): Promise<MicroMediaEntity> {
+    const media = await this.findById(id);
+    if (scope === 'cluster') {
+      media.is_cluster_representative = value;
+    } else {
+      media.is_identity_representative = value;
+    }
+    return this.mediaRepo.save(media);
+  }
+
+  /**
+   * همهٔ نمایندگان، گروه‌بندی‌شده برای نمایش در جدول خوشه‌ها و هویت‌ها:
+   *  - `cluster`  → نگاشت `topic_cluster_id` به فهرست میکرورسانه‌های نماینده.
+   *  - `identity` → نگاشت `identity_title` به فهرست میکرورسانه‌های نماینده.
+   */
+  async getRepresentativesGrouped(): Promise<{
+    cluster: Record<string, Array<{ id: number; name: string }>>;
+    identity: Record<string, Array<{ id: number; name: string }>>;
+  }> {
+    const [clusterReps, identityReps] = await Promise.all([
+      this.mediaRepo.find({
+        where: { is_cluster_representative: true },
+        order: { name: 'ASC' },
+      }),
+      this.mediaRepo.find({
+        where: { is_identity_representative: true },
+        order: { name: 'ASC' },
+      }),
+    ]);
+
+    const cluster: Record<string, Array<{ id: number; name: string }>> = {};
+    for (const m of clusterReps) {
+      if (m.topic_cluster_id == null) continue;
+      const key = String(m.topic_cluster_id);
+      (cluster[key] ??= []).push({ id: m.id, name: m.name });
+    }
+
+    const identity: Record<string, Array<{ id: number; name: string }>> = {};
+    for (const m of identityReps) {
+      if (!m.identity_title) continue;
+      (identity[m.identity_title] ??= []).push({ id: m.id, name: m.name });
+    }
+
+    return { cluster, identity };
+  }
+
   // --- list فیلترپذیر ---
 
   async list(

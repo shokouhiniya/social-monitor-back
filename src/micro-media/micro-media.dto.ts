@@ -1,6 +1,8 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -111,6 +113,19 @@ export class AssignAccountDto {
 
   @IsOptional()
   is_primary?: boolean;
+}
+
+/**
+ * DTO تعیین/لغو نماینده‌بودن یک میکرورسانه.
+ * `scope` مشخص می‌کند نمایندگی برای «خوشه» است یا «هویت» (مستقل از هم).
+ * فقط flag نمایندگی toggle می‌شود — خوشه/هویت میکرورسانه تغییر نمی‌کند.
+ */
+export class SetRepresentativeDto {
+  @IsIn(['cluster', 'identity'])
+  scope: 'cluster' | 'identity';
+
+  @IsBoolean()
+  value: boolean;
 }
 
 /** DTO ثبت snapshot عملکردی دستی. */

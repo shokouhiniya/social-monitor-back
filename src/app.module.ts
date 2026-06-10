@@ -41,6 +41,7 @@ import { MediaScoreModule } from './media-score/media-score.module';
 import { TasksModule } from './tasks/tasks.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
 import { ManagementDashboardsModule } from './management-dashboards/management-dashboards.module';
+import { DefinitionsModule } from './definitions/definitions.module';
 import { AccessModule } from './access/access.module';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 // ساختار جدید common/ (دورهٔ گذار — Requirement 1.6): interceptor و filter سراسری
@@ -118,6 +119,7 @@ import { AllExceptionsFilter } from './common/filters';
     TasksModule,
     CampaignsModule,
     ManagementDashboardsModule,
+    DefinitionsModule,
     AccessModule,
   ],
   controllers: [AppController],

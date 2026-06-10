@@ -77,6 +77,18 @@ export class MicroMediaEntity {
   @Column({ type: 'int', nullable: true })
   topic_cluster_id: number | null;
 
+  /**
+   * نمایندهٔ خوشه — آیا این میکرورسانه نمایندهٔ خوشهٔ موضوعی خود است؟
+   * مستقل از نمایندگی هویت (هر میکرورسانه می‌تواند نمایندهٔ خوشه باشد ولی
+   * نمایندهٔ هویتش نباشد و بالعکس).
+   */
+  @Column({ type: 'boolean', default: false })
+  is_cluster_representative: boolean;
+
+  /** نمایندهٔ هویت — آیا این میکرورسانه نمایندهٔ هویت خود (`identity_title`) است؟ */
+  @Column({ type: 'boolean', default: false })
+  is_identity_representative: boolean;
+
   /** وضعیت میکرورسانه: active | inactive | archived. */
   @Column({ type: 'varchar', default: 'active' })
   status: string;

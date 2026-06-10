@@ -1177,9 +1177,18 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
   }
 
   /**
-   * Resolve scope (all | representatives | cluster) to an explicit list of page IDs
-   * to feed into analytics queries. Returns `undefined` when scope is "all" so
-   * existing analytics keep covering the whole network with no filter.
+   * Resolve scope to an explicit list of page IDs to feed into analytics queries.
+   * Returns `undefined` when scope is "all"/"network" so analytics cover the whole
+   * network with no filter.
+   *
+   * Supported scopes:
+   *  - all | network            → undefined (whole network)
+   *  - representatives          → pages flagged is_representative
+   *  - cluster (+clusterId)     → pages of a cluster
+   *  - all_micromedia           → pages linked to any micro-media (تحلیل «شبکه»)
+   *  - micromedia:<id>          → pages of one micro-media
+   *  - platform:<name>          → pages of one platform/سکو
+   *  - micromedia:<id>:platform:<name> → one micro-media on one platform
    */
   async resolveScopePageIds(
     scope?: string,
@@ -1203,6 +1212,40 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
         select: ['id'],
       });
       return rows.map((r) => r.id);
+    }
+
+    // --- scopeهای میکرورسانه/سکو (micromedia-transformation) ---
+    if (
+      scope === 'all_micromedia' ||
+      scope.startsWith('micromedia:') ||
+      scope.startsWith('platform:')
+    ) {
+      const qb = this.pageRepository
+        .createQueryBuilder('p')
+        .select('p.id', 'id');
+
+      if (scope === 'all_micromedia') {
+        qb.where('p.micro_media_id IS NOT NULL');
+      } else {
+        // الگو: "micromedia:<id>" | "platform:<name>" | "micromedia:<id>:platform:<name>"
+        const mediaMatch = scope.match(/micromedia:(\d+)/);
+        const platformMatch = scope.match(/platform:([^:]+)/);
+        const conditions: string[] = [];
+        const params: Record<string, unknown> = {};
+        if (mediaMatch) {
+          conditions.push('p.micro_media_id = :mid');
+          params.mid = Number(mediaMatch[1]);
+        }
+        if (platformMatch) {
+          conditions.push('p.platform = :plat');
+          params.plat = decodeURIComponent(platformMatch[1]);
+        }
+        if (conditions.length === 0) return [];
+        qb.where(conditions.join(' AND '), params);
+      }
+
+      const rows = await qb.getRawMany<{ id: number }>();
+      return rows.map((r) => Number(r.id));
     }
 
     return undefined;

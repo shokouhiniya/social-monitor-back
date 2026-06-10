@@ -20,6 +20,7 @@ import {
   CreateMicroMediaDto,
   CreatePerformanceSnapshotDto,
   MicroMediaListQueryDto,
+  SetRepresentativeDto,
   UpdateMicroMediaDto,
 } from './micro-media.dto';
 import { CreateInteractionV2Dto } from './interactions-v2.dto';
@@ -45,6 +46,28 @@ export class MicroMediaController {
     return this.mediaService.list(query, scope);
   }
 
+  // --- نمایندگان (representatives) ---
+  // این مسیرهای ثابت باید پیش از `@Get(':id')` اعلام شوند تا با ParseIntPipe
+  // تداخل پیدا نکنند (مثلاً «representatives» به‌عنوان id تفسیر نشود).
+
+  /** همهٔ نمایندگان، گروه‌بندی‌شده بر اساس خوشه و هویت (برای نمایش در جدول). */
+  @Get('representatives')
+  getRepresentatives() {
+    return this.mediaService.getRepresentativesGrouped();
+  }
+
+  /** فهرست میکرورسانه‌های یک خوشهٔ موضوعی (برای مدیریت نمایندگان خوشه). */
+  @Get('by-cluster/:clusterId')
+  listByCluster(@Param('clusterId', ParseIntPipe) clusterId: number) {
+    return this.mediaService.listByCluster(clusterId);
+  }
+
+  /** فهرست میکرورسانه‌های یک هویت (برای مدیریت نمایندگان هویت). */
+  @Get('by-identity')
+  listByIdentity(@Query('title') title: string) {
+    return this.mediaService.listByIdentity(title);
+  }
+
   @Post()
   create(@Body() dto: CreateMicroMediaDto) {
     return this.mediaService.create(dto);
@@ -68,6 +91,15 @@ export class MicroMediaController {
     @Body() dto: UpdateMicroMediaDto,
   ) {
     return this.mediaService.update(id, dto);
+  }
+
+  /** PATCH /micro-media/:id/representative — تعیین/لغو نماینده (خوشه یا هویت). */
+  @Patch(':id/representative')
+  setRepresentative(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetRepresentativeDto,
+  ) {
+    return this.mediaService.setRepresentative(id, dto.scope, dto.value);
   }
 
   @Delete(':id')

@@ -27,6 +27,7 @@ export const NEW_ROUTE_PREFIXES = [
   '/campaigns',
   '/users',
   '/admin/users',
+  '/definitions',
   '/media-score-indicators',
   '/media-score-records',
   '/media-score',
