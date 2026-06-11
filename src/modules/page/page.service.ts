@@ -1215,6 +1215,58 @@ ${extraInstructions ? `\nدستورات اضافی:\n${extraInstructions}\n` : '
     }
 
     // --- scopeهای میکرورسانه/سکو (micromedia-transformation) ---
+
+    /**
+     * cluster-representatives: پیج‌های میکرورسانه‌هایی که is_cluster_representative=true
+     * و در صورت ارسال clusterId، فقط خوشه مشخص. اگر clusterId نباشد، همه نمایندگان خوشه.
+     */
+    if (scope === 'cluster-representatives') {
+      const qb = this.pageRepository
+        .createQueryBuilder('p')
+        .select('p.id', 'id')
+        .innerJoin('micro_media', 'mm', 'mm.id = p.micro_media_id')
+        .where('mm.is_cluster_representative = true');
+      if (clusterId) {
+        qb.andWhere('mm.topic_cluster_id = :cid', { cid: Number(clusterId) });
+      }
+      const rows = await qb.getRawMany<{ id: number }>();
+      return rows.map((r) => Number(r.id));
+    }
+
+    /**
+     * identity:<title> یا identity: همه میکرورسانه‌های یک هویت خاص.
+     * الگو: "identity:<عنوان>" — پیج‌های میکرورسانه‌هایی که identity_title مطابقت دارد.
+     */
+    if (scope.startsWith('identity:')) {
+      const title = decodeURIComponent(scope.slice(9));
+      if (!title) return [];
+      const rows = await this.pageRepository
+        .createQueryBuilder('p')
+        .select('p.id', 'id')
+        .innerJoin('micro_media', 'mm', 'mm.id = p.micro_media_id')
+        .where('mm.identity_title = :title', { title })
+        .getRawMany<{ id: number }>();
+      return rows.map((r) => Number(r.id));
+    }
+
+    /**
+     * identity-representatives: پیج‌های میکرورسانه‌هایی که is_identity_representative=true
+     * و در صورت ارسال identityTitle، فقط هویت مشخص.
+     */
+    if (scope === 'identity-representatives' || scope.startsWith('identity-representatives:')) {
+      const qb = this.pageRepository
+        .createQueryBuilder('p')
+        .select('p.id', 'id')
+        .innerJoin('micro_media', 'mm', 'mm.id = p.micro_media_id')
+        .where('mm.is_identity_representative = true');
+      if (scope.startsWith('identity-representatives:')) {
+        const title = decodeURIComponent(scope.slice(25));
+        if (title) qb.andWhere('mm.identity_title = :title', { title });
+      }
+      const rows = await qb.getRawMany<{ id: number }>();
+      return rows.map((r) => Number(r.id));
+    }
+
     if (
       scope === 'all_micromedia' ||
       scope.startsWith('micromedia:') ||

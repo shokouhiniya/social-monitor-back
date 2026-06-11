@@ -687,7 +687,15 @@ export class PostService {
   }
 
   async getPostsFeed(query: any) {
-    const { sentiment_label, post_type, search, topic, outliers_only, platform, category, cluster_id, country, date_from, date_to, page = 1, limit = 20 } = query;
+    const {
+      sentiment_label, post_type, search, topic,
+      outliers_only, platform, category, cluster_id,
+      country, date_from, date_to,
+      micro_media_id,
+      sort_by,            // 'published_at' | 'likes_count' | 'views_count' | 'comments_count' | 'shares_count' | 'engagement'
+      sort_dir = 'DESC',  // 'ASC' | 'DESC'
+      page = 1, limit = 20,
+    } = query;
 
     const qb = this.postRepository.createQueryBuilder('post')
       .leftJoinAndSelect('post.page', 'page');
@@ -696,6 +704,11 @@ export class PostService {
     if (post_type) qb.andWhere('post.post_type = :post_type', { post_type });
     if (search) qb.andWhere('post.caption ILIKE :search', { search: `%${search}%` });
     if (topic) qb.andWhere(':topic = ANY(post.extracted_topics)', { topic });
+
+    // فیلتر میکرورسانه — join از طریق page.micro_media_id
+    if (micro_media_id) {
+      qb.andWhere('page.micro_media_id = :mmid', { mmid: Number(micro_media_id) });
+    }
 
     // Page-level filters
     if (platform) qb.andWhere('page.platform = :platform', { platform });
@@ -707,12 +720,20 @@ export class PostService {
     if (date_from) qb.andWhere('post.published_at >= :date_from', { date_from: new Date(date_from) });
     if (date_to) qb.andWhere('post.published_at <= :date_to', { date_to: new Date(date_to) });
 
-    qb.orderBy('post.published_at', 'DESC');
+    // مرتب‌سازی
+    const dir: 'ASC' | 'DESC' = sort_dir?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    const SORTABLE = ['published_at', 'likes_count', 'views_count', 'comments_count', 'shares_count'];
+    if (sort_by && SORTABLE.includes(sort_by)) {
+      qb.orderBy(`post.${sort_by}`, dir);
+    } else {
+      qb.orderBy('post.published_at', 'DESC');
+    }
+
     qb.skip((page - 1) * limit).take(limit);
 
     const [data, total] = await qb.getManyAndCount();
 
-    // Calculate avg engagement per page for outlier detection
+    // محاسبه engagement و outlier
     const enriched = data.map((post) => {
       const engagement = (post.likes_count || 0) + (post.comments_count || 0) + (post.shares_count || 0);
       const avgEngagement = post.page ? Math.max((post.page.followers_count || 0) * 0.02, 100) : 100;
