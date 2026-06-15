@@ -8,7 +8,7 @@ import {
   MaxLength,
 } from 'class-validator';
 
-export const DEFINITION_TYPES = ['identity', 'platform'] as const;
+export const DEFINITION_TYPES = ['identity', 'platform', 'tag'] as const;
 
 /** DTO ساخت یک تعریف (هویت/سکو). */
 export class CreateDefinitionDto {

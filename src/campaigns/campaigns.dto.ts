@@ -17,6 +17,7 @@ export class CreateOperationDto {
   @IsOptional() @Type(() => Number) @IsInt() owner_user_id?: number;
   @IsOptional() @IsString() starts_at?: string;
   @IsOptional() @IsString() ends_at?: string;
+  @IsOptional() @IsArray() ideas?: Array<{ id: string; title: string; description?: string }>;
 }
 
 /** DTO به‌روزرسانی عملیات (partial). */
@@ -28,12 +29,14 @@ export class UpdateOperationDto {
   @IsOptional() @Type(() => Number) @IsInt() owner_user_id?: number;
   @IsOptional() @IsString() starts_at?: string;
   @IsOptional() @IsString() ends_at?: string;
+  @IsOptional() @IsArray() ideas?: Array<{ id: string; title: string; description?: string }>;
 }
 
 /** Query فهرست عملیات‌ها. */
 export class OperationListQueryDto extends PaginationQueryDto {
   @IsOptional() @IsString() status?: string;
   @IsOptional() @Type(() => Number) @IsInt() ownerUserId?: number;
+  @IsOptional() @Type(() => Number) @IsInt() microMediaId?: number;
   @IsOptional() @IsString() search?: string;
 }
 
@@ -64,6 +67,7 @@ export class CreateOperationOutputDto {
   @IsOptional() @Type(() => Number) @IsInt() micro_media_id?: number;
   @IsOptional() @Type(() => Number) @IsInt() page_id?: number;
   @IsOptional() @Type(() => Number) @IsInt() task_id?: number;
+  @IsOptional() @IsString() idea_id?: string;
   @IsOptional() @IsString() output_type?: string;
   @IsOptional() @IsString() output_url?: string;
   @IsOptional() @IsString() description?: string;

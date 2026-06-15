@@ -3,9 +3,14 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { join } from 'path';
+import * as bodyParser from 'body-parser';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // افزایش محدودیت حجم body (برای ایمپورت گروهی CSV بزرگ)
+  app.use(bodyParser.json({ limit: '10mb' }));
+  app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
 
   app.enableCors({
     origin: ['http://localhost:3033', 'http://localhost:3032', 'http://127.0.0.1:3033', 'https://sm.pish.run', 'https://iransm.pish.run'],

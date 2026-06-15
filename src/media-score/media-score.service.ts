@@ -70,6 +70,18 @@ export class MediaScoreService {
     return this.indicatorRepo.save(indicator);
   }
 
+  async deleteIndicator(id: number): Promise<{ deleted: true }> {
+    const indicator = await this.indicatorRepo.findOne({ where: { id } });
+    if (!indicator) {
+      throw new DomainException(
+        ERROR_CODES.MEDIA_SCORE_INDICATOR_NOT_FOUND,
+        `شاخصی با شناسهٔ ${id} یافت نشد`,
+      );
+    }
+    await this.indicatorRepo.delete({ id });
+    return { deleted: true };
+  }
+
   // --- records ---
 
   /** ثبت یا به‌روزرسانی (upsert) یک رکورد امتیاز برای یک دوره. */

@@ -13,9 +13,10 @@ import { PaginationQueryDto } from '../common/pagination';
  * follow_up, other. به‌صورت رشتهٔ آزاد نگه داشته می‌شود تا قابل توسعه باشد.
  */
 export class CreateInteractionV2Dto {
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
-  micro_media_id: number;
+  micro_media_id?: number;
 
   @IsString()
   @MaxLength(64)

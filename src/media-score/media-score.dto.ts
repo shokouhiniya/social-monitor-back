@@ -35,7 +35,7 @@ export class UpdateIndicatorDto {
 
 /** DTO ثبت/به‌روزرسانی یک رکورد امتیاز (upsert بر اساس period). */
 export class CreateScoreRecordDto {
-  @Type(() => Number) @IsInt() micro_media_id: number;
+  @IsOptional() @Type(() => Number) @IsInt() micro_media_id?: number;
   @Type(() => Number) @IsInt() indicator_id: number;
   @Type(() => Number) @IsNumber() value: number;
 

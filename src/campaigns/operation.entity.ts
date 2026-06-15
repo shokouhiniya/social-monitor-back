@@ -41,6 +41,13 @@ export class OperationEntity {
   @Column({ type: 'timestamp', nullable: true })
   ends_at: Date | null;
 
+  /**
+   * ایده‌های عملیات — آرایهٔ JSON از اشیاء { id, title, description }.
+   * id یک شناسه کوچک (UUID یا عدد) برای ارجاع از خروجی‌هاست.
+   */
+  @Column({ type: 'jsonb', nullable: true, default: '[]' })
+  ideas: Array<{ id: string; title: string; description?: string }>;
+
   @CreateDateColumn({ type: 'timestamp', default: () => 'now()' })
   created_at: Date;
 

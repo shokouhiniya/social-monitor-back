@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -46,6 +47,12 @@ export class MediaScoreController {
     @Body() dto: UpdateIndicatorDto,
   ) {
     return this.mediaScoreService.updateIndicator(id, dto);
+  }
+
+  @Roles('super_admin', 'admin')
+  @Delete('media-score-indicators/:id')
+  deleteIndicator(@Param('id', ParseIntPipe) id: number) {
+    return this.mediaScoreService.deleteIndicator(id);
   }
 
   @Post('media-score-records')

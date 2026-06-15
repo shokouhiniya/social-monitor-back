@@ -34,6 +34,10 @@ export class OperationOutputEntity {
   @Column({ type: 'int', nullable: true })
   task_id: number | null;
 
+  /** ارجاع به ایدهٔ مرتبط (id از آرایه ideas عملیات). */
+  @Column({ type: 'varchar', nullable: true })
+  idea_id: string | null;
+
   @Column({ type: 'varchar', default: 'other' })
   output_type: string;
 

@@ -85,6 +85,13 @@ export class CampaignsService {
       qb.andWhere('(o.title ILIKE :q OR o.goal ILIKE :q)', {
         q: `%${query.search}%`,
       });
+    // فیلتر بر اساس میکرورسانه — عملیاتی که این رسانه در آن هست
+    if (query.microMediaId) {
+      qb.andWhere(
+        `EXISTS (SELECT 1 FROM operation_media om WHERE om.operation_id = o.id AND om.micro_media_id = :mmId)`,
+        { mmId: query.microMediaId },
+      );
+    }
 
     // scope: کاربر غیرفراگیر تنها عملیات‌های خودش یا عملیات‌هایی که رسانه‌ای از
     // هاب‌های او در آن‌ها هست را می‌بیند.
